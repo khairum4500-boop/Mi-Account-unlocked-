@@ -1,5 +1,6 @@
 package com.example
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -48,29 +49,69 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.components.AdminContactCard
 import com.example.ui.screens.AuthorizationScreen
-import com.example.ui.screens.LicenseAdminScreen
+import com.example.ui.screens.MiAccountUnlockedScreen
 import com.example.ui.theme.MiOrange
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.TechCyan
 import com.example.ui.theme.TechDarkBg
 import com.example.ui.theme.TechDarkSurface
 import com.example.ui.viewmodel.MainViewModel
+import dev.rohitverma882.miunlock_account_v2.LoginData
+import dev.rohitverma882.miunlock_account_v2.LoginActivity
 
 class MainActivity : ComponentActivity() {
+
+    private var loginDataState = mutableStateOf<LoginData?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        handleIntent(intent)
+
         setContent {
             MyApplicationTheme {
-                MiUnlockApp()
+                val currentLoginData by loginDataState
+                MiUnlockApp(
+                    initialLoginData = currentLoginData,
+                    onOpenLogin = { openLoginActivity(true) },
+                    onLogout = {
+                        loginDataState.value = null
+                        openLoginActivity(false)
+                    }
+                )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        @Suppress("DEPRECATION")
+        val data = intent?.getParcelableExtra<LoginData>("data")
+        if (data != null) {
+            loginDataState.value = data
+        }
+    }
+
+    private fun openLoginActivity(isLogin: Boolean) {
+        val intent = Intent(this, LoginActivity::class.java).apply {
+            putExtra("login", isLogin)
+        }
+        startActivity(intent)
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MiUnlockApp(viewModel: MainViewModel = viewModel()) {
+fun MiUnlockApp(
+    viewModel: MainViewModel = viewModel(),
+    initialLoginData: LoginData? = null,
+    onOpenLogin: () -> Unit = {},
+    onLogout: () -> Unit = {}
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var showAdminContactDialog by remember { mutableStateOf(false) }
@@ -190,7 +231,7 @@ fun MiUnlockApp(viewModel: MainViewModel = viewModel()) {
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "MI Unlock",
+                            text = "MI Unlock Tool",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
@@ -233,6 +274,7 @@ fun MiUnlockApp(viewModel: MainViewModel = viewModel()) {
                 .padding(innerPadding)
         ) {
             if (!isApproved) {
+                // GATE 1: Authorization & Approval Lock
                 AuthorizationScreen(
                     state = uiState,
                     onSubmitApproval = { name, contact, telegram, whatsapp ->
@@ -241,10 +283,12 @@ fun MiUnlockApp(viewModel: MainViewModel = viewModel()) {
                     onRefresh = { viewModel.refreshAll() }
                 )
             } else {
-                LicenseAdminScreen(
+                // GATE 2: Xiaomi Mi Account Login & Unlock Token Extraction
+                MiAccountUnlockedScreen(
                     state = uiState,
-                    onRefresh = { viewModel.refreshAll() },
-                    onUpdateServerUrl = { url -> viewModel.updateServerUrl(url) }
+                    loginData = initialLoginData,
+                    onOpenLogin = onOpenLogin,
+                    onLogout = onLogout
                 )
             }
         }

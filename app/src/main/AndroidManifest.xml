@@ -49,6 +49,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name="dev.rohitverma882.miunlock_account_v2.LoginActivity"
+            android:exported="false"
+            android:label="Mi Account Login"
+            android:configChanges="orientation|screenSize"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 
 </manifest>
