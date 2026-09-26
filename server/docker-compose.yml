@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  mi-unlock-server:
+    build: .
+    container_name: mi-unlock-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - DATABASE_FILE=/usr/src/app/data/mi_unlock.db
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - ADMIN_TELEGRAM_IDS=${ADMIN_TELEGRAM_IDS}
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
+    volumes:
+      - ./data:/usr/src/app/data

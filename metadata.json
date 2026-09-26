@@ -1,0 +1,6 @@
+{
+  "name": "MI Unlock",
+  "description": "MI & HyperOS Bootloader Unlock tool with device status diagnosis, fastboot unlock assistant, and server-authorized license management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

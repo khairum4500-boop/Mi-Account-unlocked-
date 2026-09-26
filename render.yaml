@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: mi-unlock-backend
+    runtime: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node server.js
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mi-unlock-db
+          property: connectionString
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false # Set securely in Render dashboard
+      - key: ADMIN_TELEGRAM_IDS
+        value: "7585875519"
+      - key: ADMIN_API_KEY
+        generateValue: true
+      - key: DEFAULT_ADMIN_TELEGRAM
+        value: "@itz_khairum"
+      - key: DEFAULT_ADMIN_CONTACT
+        value: "01577430152"
+      - key: DEFAULT_ADMIN_WHATSAPP
+        value: "01735047020"
+      - key: DEFAULT_ADMIN_EMAIL
+        value: "siam162536@gmail.com"
+
+databases:
+  - name: mi-unlock-db
+    plan: free
+    databaseName: mi_unlock
+    user: mi_unlock_user
