@@ -26,7 +26,7 @@ class LicensePreferences(context: Context) {
         private const val KEY_SUBMITTED_ONCE = "key_submitted_once"
 
         // Default production backend endpoint
-        const val DEFAULT_BASE_URL = "https://ais-dev-66u6cecxcd5arne3b2zgz5-650701508306.asia-southeast1.run.app/"
+        const val DEFAULT_BASE_URL = "https://mi-account-unlocked.onrender.com/"
     }
 
     var baseUrl: String
