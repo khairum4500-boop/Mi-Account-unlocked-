@@ -1,4 +1,13 @@
 require('dotenv').config();
+
+process.on('uncaughtException', (err) => {
+    console.error('[SERVER CRITICAL] Uncaught Exception:', err.message || err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[SERVER CRITICAL] Unhandled Rejection:', reason);
+});
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -16,18 +25,29 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// Rate Limiting
+// Rate Limiting & High-Concurrency Protection
 const generalLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 200,
-    message: { error: 'Too many requests from this IP, please try again later.' }
+    windowMs: 60 * 1000, // 1 minute window
+    max: 600, // 600 requests per minute per IP (safe for carrier NAT)
+    message: { error: 'Too many requests from this IP, please try again in a moment.' }
 });
 
 const registrationLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000, // 1 hour window
-    max: 10, // Max 10 requests per hour per IP
-    message: { error: 'Too many approval requests. Please wait before trying again.' }
+    windowMs: 15 * 60 * 1000, // 15 minute window
+    max: 30, // 30 submissions per 15 mins per IP
+    message: { error: 'Too many approval requests. Please wait a few minutes before trying again.' }
 });
+
+// 3-Second anti-spam debounce per device ID
+const deviceSubmissionCooldown = new Map();
+const SUBMISSION_COOLDOWN_MS = 3000;
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [devId, time] of deviceSubmissionCooldown.entries()) {
+        if (now - time > 30000) deviceSubmissionCooldown.delete(devId);
+    }
+}, 30000);
 
 app.use('/api/', generalLimiter);
 app.use('/api/approval/request', registrationLimiter);
@@ -103,8 +123,21 @@ app.post('/api/approval/request', async (req, res) => {
             return res.status(400).json({ error: 'deviceId, name, and contactNumber are required' });
         }
 
+        const cleanDevId = deviceId.trim();
+        const now = Date.now();
+        const lastSubmit = deviceSubmissionCooldown.get(cleanDevId) || 0;
+
+        // If duplicate submission within 3-second cooldown, return existing license without re-alerting
+        if (now - lastSubmit < SUBMISSION_COOLDOWN_MS) {
+            const existing = await db.getLicense(cleanDevId);
+            if (existing) {
+                return res.status(200).json(existing);
+            }
+        }
+        deviceSubmissionCooldown.set(cleanDevId, now);
+
         const license = await db.registerApprovalRequest({
-            deviceId: deviceId.trim(),
+            deviceId: cleanDevId,
             name: name.trim(),
             contactNumber: contactNumber.trim(),
             telegramUsername: (telegramUsername || '').trim(),
@@ -114,9 +147,9 @@ app.post('/api/approval/request', async (req, res) => {
             deviceBrand: (deviceBrand || '').trim()
         });
 
-        // Trigger real-time Telegram notification to admin
+        // Trigger queued real-time Telegram notification to admin
         notifyAdminsNewRequest(license).catch(err => {
-            console.error('[API] Failed to send Telegram alert:', err.message);
+            console.error('[API] Failed to queue Telegram alert:', err.message);
         });
 
         res.status(200).json(license);

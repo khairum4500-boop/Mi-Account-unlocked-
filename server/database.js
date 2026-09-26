@@ -21,6 +21,42 @@ if (isPostgres) {
     const DB_PATH = process.env.DATABASE_FILE || path.join(__dirname, 'mi_unlock.db');
     sqliteDb = new sqlite3.Database(DB_PATH);
     console.log('[DB] Using local SQLite database at', DB_PATH);
+    
+    // Concurrency optimization for SQLite: WAL mode, busy timeout, cache
+    sqliteDb.serialize(() => {
+        sqliteDb.run('PRAGMA journal_mode = WAL;');
+        sqliteDb.run('PRAGMA busy_timeout = 30000;');
+        sqliteDb.run('PRAGMA synchronous = NORMAL;');
+        sqliteDb.run('PRAGMA cache_size = -64000;');
+        sqliteDb.run('PRAGMA temp_store = MEMORY;');
+    });
+}
+
+// In-memory cache for high-concurrency read efficiency
+const licenseCache = new Map();
+const LICENSE_CACHE_TTL_MS = 3000; // 3-second cache for instant microsecond responses
+
+let settingsCache = null;
+let settingsCacheExpiry = 0;
+const SETTINGS_CACHE_TTL_MS = 15000; // 15-second cache for app configuration
+
+function invalidateLicenseCache(deviceId) {
+    if (deviceId) {
+        licenseCache.delete(String(deviceId).trim());
+    }
+}
+
+function invalidateSettingsCache() {
+    settingsCache = null;
+    settingsCacheExpiry = 0;
+}
+
+// Simple mutex queue to serialize SQLite write transactions under heavy load
+let sqliteWriteQueue = Promise.resolve();
+function queueSqliteWrite(fn) {
+    const next = sqliteWriteQueue.then(fn, fn);
+    sqliteWriteQueue = next.catch(() => {});
+    return next;
 }
 
 // Convert SQLite ? placeholders to PostgreSQL $1, $2, etc.
@@ -110,12 +146,12 @@ async function run(sql, params = []) {
             changes: res.rowCount
         };
     } else {
-        return new Promise((resolve, reject) => {
+        return queueSqliteWrite(() => new Promise((resolve, reject) => {
             sqliteDb.run(sql, params, function (err) {
                 if (err) return reject(err);
                 resolve({ lastID: this.lastID, changes: this.changes });
             });
-        });
+        }));
     }
 }
 
@@ -151,10 +187,14 @@ async function all(sql, params = []) {
 
 // Settings methods
 async function getSettings() {
+    const now = Date.now();
+    if (settingsCache && now < settingsCacheExpiry) {
+        return settingsCache;
+    }
     const rows = await all(`SELECT key, value FROM settings`);
     const map = {};
     rows.forEach(r => map[r.key] = r.value);
-    return {
+    const res = {
         appName: map['app_name'] || 'MI Unlock',
         minVersion: parseInt(map['min_version'] || '1', 10),
         latestVersion: parseInt(map['latest_version'] || '1', 10),
@@ -166,10 +206,14 @@ async function getSettings() {
         adminWhatsapp: map['admin_whatsapp'] || '01735047020',
         adminEmail: map['admin_email'] || 'siam162536@gmail.com'
     };
+    settingsCache = res;
+    settingsCacheExpiry = now + SETTINGS_CACHE_TTL_MS;
+    return res;
 }
 
 async function updateSetting(key, value) {
     const now = Date.now();
+    invalidateSettingsCache();
     if (isPostgres) {
         await run(`
             INSERT INTO settings (key, value, updated_at)
@@ -185,8 +229,22 @@ async function updateSetting(key, value) {
     }
 }
 
+async function getSingleSetting(key) {
+    const row = await get(`SELECT value FROM settings WHERE key = ?`, [key]);
+    return row ? row.value : null;
+}
+
 // License Retrieval
 async function getLicense(deviceId) {
+    if (!deviceId) return null;
+    const cleanId = String(deviceId).trim();
+    const now = Date.now();
+
+    const cached = licenseCache.get(cleanId);
+    if (cached && (now - cached.timestamp) < LICENSE_CACHE_TTL_MS) {
+        return cached.data;
+    }
+
     const row = await get(`
         SELECT
             l.license_id,
@@ -211,25 +269,24 @@ async function getLicense(deviceId) {
         LEFT JOIN devices d ON l.device_id = d.device_id
         LEFT JOIN users u ON l.user_id = u.id
         WHERE l.device_id = ?
-    `, [deviceId]);
+    `, [cleanId]);
 
     if (!row) return null;
 
-    const now = Date.now();
     let currentStatus = row.status;
 
     // Check expiration dynamically
     if (currentStatus === 'APPROVED' && !row.is_lifetime && row.expiration_at && now > row.expiration_at) {
         currentStatus = 'EXPIRED';
-        await run(`UPDATE licenses SET status = 'EXPIRED' WHERE device_id = ?`, [deviceId]);
-        await run(`UPDATE devices SET status = 'EXPIRED' WHERE device_id = ?`, [deviceId]);
+        await run(`UPDATE licenses SET status = 'EXPIRED' WHERE device_id = ?`, [cleanId]);
+        await run(`UPDATE devices SET status = 'EXPIRED' WHERE device_id = ?`, [cleanId]);
     }
 
     const daysRemaining = (row.expiration_at && row.expiration_at > now)
         ? Math.ceil((row.expiration_at - now) / (1000 * 60 * 60 * 24))
         : 0;
 
-    return {
+    const result = {
         status: currentStatus,
         deviceId: row.device_id,
         licenseId: row.license_id,
@@ -248,11 +305,15 @@ async function getLicense(deviceId) {
         isLifetime: Boolean(row.is_lifetime),
         serverTime: now
     };
+
+    licenseCache.set(cleanId, { timestamp: now, data: result });
+    return result;
 }
 
 async function registerApprovalRequest(data) {
     const now = Date.now();
     const { deviceId, name, contactNumber, telegramUsername, whatsappNumber, appVersion, deviceModel, deviceBrand } = data;
+    invalidateLicenseCache(deviceId);
 
     // 1. Insert or update user
     let user = await get(`SELECT id FROM users WHERE contact_number = ?`, [contactNumber]);
@@ -297,6 +358,7 @@ async function registerApprovalRequest(data) {
 }
 
 async function approveDevice(deviceId, durationDays, isLifetime = false, adminId = 'SYSTEM') {
+    invalidateLicenseCache(deviceId);
     const now = Date.now();
     let expirationAt = null;
 
@@ -327,6 +389,7 @@ async function approveDevice(deviceId, durationDays, isLifetime = false, adminId
 }
 
 async function rejectDevice(deviceId, reason = 'Application requirements not met', adminId = 'SYSTEM') {
+    invalidateLicenseCache(deviceId);
     const now = Date.now();
     await run(`UPDATE licenses SET status = 'REJECTED', rejection_reason = ? WHERE device_id = ?`, [reason, deviceId]);
     await run(`UPDATE devices SET status = 'REJECTED' WHERE device_id = ?`, [deviceId]);
@@ -341,6 +404,7 @@ async function rejectDevice(deviceId, reason = 'Application requirements not met
 }
 
 async function blockDevice(deviceId, adminId = 'SYSTEM') {
+    invalidateLicenseCache(deviceId);
     const now = Date.now();
     await run(`UPDATE licenses SET status = 'BLOCKED' WHERE device_id = ?`, [deviceId]);
     await run(`UPDATE devices SET status = 'BLOCKED' WHERE device_id = ?`, [deviceId]);
@@ -353,6 +417,7 @@ async function blockDevice(deviceId, adminId = 'SYSTEM') {
 }
 
 async function unblockDevice(deviceId, restoreStatus = 'APPROVED', durationDays = 30, adminId = 'SYSTEM') {
+    invalidateLicenseCache(deviceId);
     const now = Date.now();
     if (restoreStatus === 'APPROVED') {
         const expirationAt = now + (durationDays * 24 * 60 * 60 * 1000);
@@ -372,6 +437,7 @@ async function unblockDevice(deviceId, restoreStatus = 'APPROVED', durationDays 
 }
 
 async function revokeDevice(deviceId, adminId = 'SYSTEM') {
+    invalidateLicenseCache(deviceId);
     const now = Date.now();
     await run(`UPDATE licenses SET status = 'REVOKED', expiration_at = ? WHERE device_id = ?`, [now, deviceId]);
     await run(`UPDATE devices SET status = 'REVOKED' WHERE device_id = ?`, [deviceId]);
@@ -382,6 +448,7 @@ async function revokeDevice(deviceId, adminId = 'SYSTEM') {
 }
 
 async function extendLicense(deviceId, additionalDays, adminId = 'SYSTEM') {
+    invalidateLicenseCache(deviceId);
     const lic = await getLicense(deviceId);
     if (!lic) throw new Error('Device not found');
 
@@ -406,6 +473,7 @@ async function extendLicense(deviceId, additionalDays, adminId = 'SYSTEM') {
 }
 
 async function recordHeartbeat(deviceId, appVersion) {
+    invalidateLicenseCache(deviceId);
     const now = Date.now();
     await run(`UPDATE devices SET last_seen_at = ?, app_version = COALESCE(?, app_version) WHERE device_id = ?`,
         [now, appVersion, deviceId]);
@@ -525,6 +593,7 @@ async function getRecentAuditLogs(limit = 15) {
 module.exports = {
     initDb,
     getSettings,
+    getSingleSetting,
     updateSetting,
     getLicense,
     registerApprovalRequest,

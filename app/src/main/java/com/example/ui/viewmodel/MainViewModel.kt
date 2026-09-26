@@ -10,6 +10,8 @@ import com.example.data.model.DeviceRegistrationRequest
 import com.example.data.model.LicenseStatusResponse
 import com.example.data.repository.LicenseRepository
 import com.example.util.DeviceIdProvider
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,7 +30,8 @@ data class MainUiState(
     val errorMessage: String? = null,
     val successMessage: String? = null,
     val isSubmittingApproval: Boolean = false,
-    val serverBaseUrl: String = ""
+    val serverBaseUrl: String = "",
+    val cooldownSeconds: Int = 0
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -40,6 +43,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     private val appVersionCode = 1
+    private var submitCooldownJob: Job? = null
+    private var lastSubmitTime = 0L
+    private var lastRefreshTime = 0L
 
     init {
         val deviceId = DeviceIdProvider.getDeviceId(application)
@@ -57,6 +63,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshAll() {
+        val now = System.currentTimeMillis()
+        if (now - lastRefreshTime < 2000L && _uiState.value.isRefreshing) {
+            return // Debounce refresh requests
+        }
+        lastRefreshTime = now
+
         viewModelScope.launch {
             _uiState.update { it.copy(isRefreshing = true, errorMessage = null) }
             val deviceId = _uiState.value.deviceId
@@ -113,11 +125,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         telegram: String,
         whatsapp: String
     ) {
+        val now = System.currentTimeMillis()
+        if (now - lastSubmitTime < 3000L || _uiState.value.isSubmittingApproval || _uiState.value.cooldownSeconds > 0) {
+            return // Enforce 3-second cooldown to protect server and prevent duplicate requests
+        }
+        lastSubmitTime = now
+
         val deviceId = _uiState.value.deviceId
 
         if (name.isBlank() || contact.isBlank()) {
             _uiState.update { it.copy(errorMessage = "Name and Contact Number are required.") }
             return
+        }
+
+        // Start 3-second countdown timer for UI feedback and anti-spam protection
+        submitCooldownJob?.cancel()
+        submitCooldownJob = viewModelScope.launch {
+            for (sec in 3 downTo 1) {
+                _uiState.update { it.copy(cooldownSeconds = sec) }
+                delay(1000L)
+            }
+            _uiState.update { it.copy(cooldownSeconds = 0) }
         }
 
         viewModelScope.launch {

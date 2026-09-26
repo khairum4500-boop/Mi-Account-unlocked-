@@ -221,6 +221,7 @@ fun AuthorizationScreen(
                     onTelegramChange = { telegramInput = it },
                     onWhatsappChange = { whatsappInput = it },
                     isSubmitting = state.isSubmittingApproval,
+                    cooldownSeconds = state.cooldownSeconds,
                     onSubmit = {
                         onSubmitApproval(nameInput, contactInput, telegramInput, whatsappInput)
                         isEditingForm = false
@@ -256,6 +257,7 @@ private fun ApprovalRequestForm(
     onTelegramChange: (String) -> Unit,
     onWhatsappChange: (String) -> Unit,
     isSubmitting: Boolean,
+    cooldownSeconds: Int = 0,
     onSubmit: () -> Unit
 ) {
     Card(
@@ -361,7 +363,7 @@ private fun ApprovalRequestForm(
 
             Button(
                 onClick = onSubmit,
-                enabled = !isSubmitting && name.isNotBlank() && contact.isNotBlank(),
+                enabled = !isSubmitting && cooldownSeconds == 0 && name.isNotBlank() && contact.isNotBlank(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp)
@@ -380,6 +382,12 @@ private fun ApprovalRequestForm(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Submitting...")
+                } else if (cooldownSeconds > 0) {
+                    Text(
+                        text = "PLEASE WAIT (${cooldownSeconds}s)...",
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
+                    )
                 } else {
                     Text(
                         text = "REQUEST APPROVAL",
