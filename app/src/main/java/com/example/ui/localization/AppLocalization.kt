@@ -201,12 +201,13 @@ object AppLocalization {
     private const val KEY = "language"
     private val _language = MutableStateFlow(AppLanguage.EN)
     val language: StateFlow<AppLanguage> = _language.asStateFlow()
-    fun initialize(context: Context) { val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null); _language.value = AppLanguage.entries.firstOrNull { it.code == saved } ?: AppLanguage.EN }
-    fun setLanguage(context: Context, language: AppLanguage) { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, language.code).apply(); _language.value = language }
+    @Volatile private var currentLanguage: AppLanguage = AppLanguage.EN
+    fun initialize(context: Context) { val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null); val selected = AppLanguage.entries.firstOrNull { it.code == saved } ?: AppLanguage.EN; currentLanguage = selected; _language.value = selected }
+    fun setLanguage(context: Context, language: AppLanguage) { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, language.code).apply(); currentLanguage = language; _language.value = language }
     fun text(language: AppLanguage, source: String): String = dictionaries[language]?.get(source) ?: fallbackTranslations[language]?.get(source) ?: extendedTranslations[language]?.get(source) ?: uiTranslations[language]?.get(source) ?: commonErrorTranslations[language]?.get(source) ?: finalTranslations[language]?.get(source) ?: completeTranslations[language]?.get(source) ?: completenessTranslations[language]?.get(source) ?: additionalUiTranslations[language]?.get(source) ?: processingErrorTranslations[language]?.get(source) ?: source
     fun locale(language: AppLanguage): Locale = Locale.forLanguageTag(language.code)
 }
 
 val LocalAppLanguage = staticCompositionLocalOf { AppLanguage.EN }
 
-@Composable fun tr(source: String): String = AppLocalization.text(LocalAppLanguage.current, source)
+fun tr(source: String): String = AppLocalization.text(AppLocalization.language.value, source)

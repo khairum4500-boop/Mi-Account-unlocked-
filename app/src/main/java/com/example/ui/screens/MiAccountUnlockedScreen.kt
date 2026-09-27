@@ -42,6 +42,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -368,14 +369,14 @@ private fun CanonicalOutputCard(loginData: LoginData) {
                 Spacer(modifier = Modifier.height(8.dp))
             }
             Text(tr("Original Output (HEX)"), fontWeight = FontWeight.Bold, color = Color.White)
-            Text(payload.hex, fontFamily = FontFamily.Monospace, fontSize = 10.sp, color = TechCyan, modifier = Modifier.padding(top = 8.dp), style = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr))
+            Text(payload.hex, fontFamily = FontFamily.Monospace, fontSize = 10.sp, color = TechCyan, modifier = Modifier.padding(top = 8.dp), style = TextStyle(textDirection = TextDirection.Ltr))
             OutlinedButton(enabled = payload.isValid, onClick = { copyToClipboard(context, tr("Original Output"), payload.hex, tr("Copied")) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp)); Text(tr("COPY ORIGINAL OUTPUT"))
             }
             Spacer(modifier = Modifier.height(14.dp))
             Text(tr("Decoded Output (JSON)"), fontWeight = FontWeight.Bold, color = Color.White)
-            Text(payload.decodedJson ?: payload.json, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color.White, modifier = Modifier.padding(top = 8.dp), style = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr))
+            Text(payload.decodedJson ?: payload.json, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color.White, modifier = Modifier.padding(top = 8.dp), style = TextStyle(textDirection = TextDirection.Ltr))
             OutlinedButton(enabled = payload.isValid, onClick = { copyToClipboard(context, tr("Decoded Output"), payload.json, tr("Copied")) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp)); Text(tr("COPY DECODED OUTPUT"))
