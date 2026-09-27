@@ -240,11 +240,15 @@ app.post('/api/admin/block', requireAdminKey, async (req, res) => {
 
 app.post('/api/admin/unblock', requireAdminKey, async (req, res) => {
     try {
-        const { deviceId, durationDays, durationSeconds, adminId } = req.body;
+        const { deviceId, durationDays, durationSeconds, isLifetime, adminId } = req.body;
         if (!deviceId) return res.status(400).json({ error: 'deviceId is required' });
+        if (Boolean(isLifetime)) {
+            const updated = await db.unblockDeviceDuration(deviceId, 0, true, adminId || 'API_ADMIN');
+            return res.json(updated);
+        }
         const seconds = parseDurationSeconds(durationSeconds, durationDays);
         if (seconds == null) return res.status(400).json({ error: 'durationSeconds must be between 60 seconds and 10 years' });
-        const updated = await db.unblockDeviceDuration(deviceId, seconds, adminId || 'API_ADMIN');
+        const updated = await db.unblockDeviceDuration(deviceId, seconds, false, adminId || 'API_ADMIN');
         res.json(updated);
     } catch (err) {
         res.status(500).json({ error: err.message });

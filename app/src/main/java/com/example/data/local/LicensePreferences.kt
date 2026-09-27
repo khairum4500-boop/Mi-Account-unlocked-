@@ -2,6 +2,7 @@ package com.example.data.local
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.SystemClock
 import com.example.data.model.LicenseStatusResponse
 import java.security.MessageDigest
 
@@ -22,6 +23,8 @@ class LicensePreferences(context: Context) {
         private const val KEY_EXPIRATION_TIME = "key_expiration_time"
         private const val KEY_LAST_VERIFIED_TIME = "key_last_verified_time"
         private const val KEY_SERVER_OFFSET = "key_server_offset"
+        private const val KEY_SERVER_ANCHOR_TIME = "key_server_anchor_time"
+        private const val KEY_SERVER_ANCHOR_ELAPSED = "key_server_anchor_elapsed"
         private const val KEY_REJECTION_REASON = "key_rejection_reason"
         private const val KEY_CHECKSUM = "key_checksum"
         private const val KEY_SUBMITTED_ONCE = "key_submitted_once"
@@ -61,6 +64,8 @@ class LicensePreferences(context: Context) {
             .putLong("key_duration_seconds", response.durationSeconds ?: 0L)
             .putLong(KEY_LAST_VERIFIED_TIME, now)
             .putLong(KEY_SERVER_OFFSET, (response.serverTime ?: now) - now)
+            .putLong(KEY_SERVER_ANCHOR_TIME, response.serverTime ?: now)
+            .putLong(KEY_SERVER_ANCHOR_ELAPSED, SystemClock.elapsedRealtime())
             .putString(KEY_REJECTION_REASON, response.rejectionReason)
             .putString(KEY_CHECKSUM, checksum)
             .apply()
@@ -110,6 +115,25 @@ class LicensePreferences(context: Context) {
         )
     }
 
+    fun clearCachedLicense() {
+        prefs.edit()
+            .remove(KEY_STATUS)
+            .remove(KEY_LICENSE_ID)
+            .remove(KEY_USER_NAME)
+            .remove(KEY_CONTACT_NUMBER)
+            .remove(KEY_TELEGRAM_USER)
+            .remove(KEY_WHATSAPP_NUMBER)
+            .remove(KEY_ACTIVATION_TIME)
+            .remove(KEY_EXPIRATION_TIME)
+            .remove("key_duration_seconds")
+            .remove(KEY_LAST_VERIFIED_TIME)
+            .remove(KEY_REJECTION_REASON)
+            .remove(KEY_CHECKSUM)
+            .remove(KEY_SERVER_ANCHOR_TIME)
+            .remove(KEY_SERVER_ANCHOR_ELAPSED)
+            .apply()
+    }
+
     fun isOfflineGraceValid(expirationTime: Long): Boolean {
         val lastVerified = prefs.getLong(KEY_LAST_VERIFIED_TIME, 0L)
         val now = trustedNowMillis()
@@ -120,7 +144,17 @@ class LicensePreferences(context: Context) {
     }
 
 
-    fun trustedNowMillis(): Long = System.currentTimeMillis() + prefs.getLong(KEY_SERVER_OFFSET, 0L)
+    fun trustedNowMillis(): Long {
+        val anchorTime = prefs.getLong(KEY_SERVER_ANCHOR_TIME, 0L)
+        val anchorElapsed = prefs.getLong(KEY_SERVER_ANCHOR_ELAPSED, 0L)
+        if (anchorTime > 0L && anchorElapsed > 0L) {
+            val elapsedDelta = SystemClock.elapsedRealtime() - anchorElapsed
+            if (elapsedDelta >= 0L && elapsedDelta <= 7L * 24L * 60L * 60L * 1000L) {
+                return anchorTime + elapsedDelta
+            }
+        }
+        return System.currentTimeMillis() + prefs.getLong(KEY_SERVER_OFFSET, 0L)
+    }
 
     fun clear() {
         prefs.edit().clear().apply()

@@ -55,8 +55,17 @@ class LicenseRepository(private val preferences: LicensePreferences) {
                 val data = response.body()!!
                 preferences.saveLicense(data)
                 Result.success(data)
+            } else if (response.code() == 404) {
+                // A confirmed server-side 404 must never be masked by an old APPROVED cache.
+                preferences.clearCachedLicense()
+                Result.success(
+                    LicenseStatusResponse(
+                        status = "UNREGISTERED",
+                        deviceId = deviceId,
+                        serverTime = System.currentTimeMillis()
+                    )
+                )
             } else {
-                // If 404 or specific code, fallback to cache
                 fallbackOrError(deviceId, "Server returned ${response.code()}: ${response.message()}")
             }
         } catch (e: Exception) {

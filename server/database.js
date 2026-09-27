@@ -193,6 +193,64 @@ async function all(sql, params = []) {
     }
 }
 
+// Database transactions keep license/device state atomic. A status change is only
+// considered successful when every related row and audit entry commits together.
+async function withTransaction(work) {
+    if (isPostgres) {
+        const client = await pgPool.connect();
+        const tx = {
+            run: async (sql, params = []) => {
+                const res = await client.query(formatQueryForEngine(sql), params);
+                return { lastID: res.rows?.[0]?.id ?? null, changes: res.rowCount };
+            },
+            get: async (sql, params = []) => {
+                const res = await client.query(formatQueryForEngine(sql), params);
+                return res.rows[0] || null;
+            },
+            all: async (sql, params = []) => {
+                const res = await client.query(formatQueryForEngine(sql), params);
+                return res.rows;
+            }
+        };
+        try {
+            await client.query('BEGIN');
+            const result = await work(tx);
+            await client.query('COMMIT');
+            return result;
+        } catch (error) {
+            try { await client.query('ROLLBACK'); } catch (_) {}
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    return queueSqliteWrite(async () => {
+        const sqliteRun = (sql, params = []) => new Promise((resolve, reject) => {
+            sqliteDb.run(sql, params, function (err) {
+                if (err) return reject(err);
+                resolve({ lastID: this.lastID, changes: this.changes });
+            });
+        });
+        const sqliteGet = (sql, params = []) => new Promise((resolve, reject) => {
+            sqliteDb.get(sql, params, (err, row) => err ? reject(err) : resolve(row || null));
+        });
+        const sqliteAll = (sql, params = []) => new Promise((resolve, reject) => {
+            sqliteDb.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows));
+        });
+        const tx = { run: sqliteRun, get: sqliteGet, all: sqliteAll };
+        try {
+            await sqliteRun('BEGIN IMMEDIATE TRANSACTION');
+            const result = await work(tx);
+            await sqliteRun('COMMIT');
+            return result;
+        } catch (error) {
+            try { await sqliteRun('ROLLBACK'); } catch (_) {}
+            throw error;
+        }
+    });
+}
+
 // Settings methods
 async function getSettings() {
     const now = Date.now();
@@ -291,8 +349,10 @@ async function getLicense(deviceId) {
     // Check expiration dynamically
     if (currentStatus === 'APPROVED' && !row.is_lifetime && row.expiration_at && now >= row.expiration_at) {
         currentStatus = 'EXPIRED';
-        await run(`UPDATE licenses SET status = 'EXPIRED' WHERE device_id = ?`, [cleanId]);
-        await run(`UPDATE devices SET status = 'EXPIRED' WHERE device_id = ?`, [cleanId]);
+        await withTransaction(async (tx) => {
+            await tx.run(`UPDATE licenses SET status = 'EXPIRED' WHERE device_id = ? AND status = 'APPROVED'`, [cleanId]);
+            await tx.run(`UPDATE devices SET status = 'EXPIRED' WHERE device_id = ? AND status = 'APPROVED'`, [cleanId]);
+        });
     }
 
     const daysRemaining = (row.expiration_at && row.expiration_at > now)
@@ -327,77 +387,99 @@ async function getLicense(deviceId) {
 async function registerApprovalRequest(data) {
     const now = Date.now();
     const { deviceId, name, contactNumber, telegramUsername, whatsappNumber, appVersion, deviceModel, deviceBrand } = data;
-    invalidateLicenseCache(deviceId);
+    const cleanId = String(deviceId || '').trim();
+    if (!cleanId) throw new Error('Device ID is required');
+    if (!name?.trim() || !contactNumber?.trim()) throw new Error('Name and contact number are required');
 
-    // 1. Insert or update user
-    let user = await get(`SELECT id FROM users WHERE contact_number = ?`, [contactNumber]);
-    let userId;
-    if (user) {
-        userId = user.id;
-        await run(`UPDATE users SET name = ?, telegram_username = ?, whatsapp_number = ? WHERE id = ?`,
-            [name, telegramUsername, whatsappNumber, userId]);
-    } else {
-        const uRes = await run(`INSERT INTO users (name, contact_number, telegram_username, whatsapp_number, created_at)
-                                VALUES (?, ?, ?, ?, ?)`, [name, contactNumber, telegramUsername, whatsappNumber, now]);
-        userId = uRes.lastID;
-    }
+    await withTransaction(async (tx) => {
+        const existingLicense = await tx.get(`SELECT status, is_lifetime, expiration_at FROM licenses WHERE device_id = ?`, [cleanId]);
+        if (existingLicense) {
+            const active = existingLicense.status === 'APPROVED' &&
+                (existingLicense.is_lifetime || !existingLicense.expiration_at || now < existingLicense.expiration_at);
+            if (existingLicense.status === 'BLOCKED') {
+                throw new Error('This device is blocked. Contact an administrator to restore access.');
+            }
+            if (active) {
+                throw new Error('This device already has an active license.');
+            }
+        }
 
-    // 2. Insert or update device
-    await run(`INSERT INTO devices (device_id, user_id, model, brand, app_version, status, last_seen_at, created_at)
-               VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)
-               ON CONFLICT(device_id) DO UPDATE SET
-                   user_id = EXCLUDED.user_id,
-                   model = EXCLUDED.model,
-                   brand = EXCLUDED.brand,
-                   app_version = EXCLUDED.app_version,
-                   last_seen_at = EXCLUDED.last_seen_at`,
-        [deviceId, userId, deviceModel, deviceBrand, appVersion || 1, now, now]);
+        let user = await tx.get(`SELECT id FROM users WHERE contact_number = ?`, [contactNumber.trim()]);
+        let userId;
+        if (user) {
+            userId = user.id;
+            await tx.run(`UPDATE users SET name = ?, telegram_username = ?, whatsapp_number = ? WHERE id = ?`,
+                [name.trim(), telegramUsername || '', whatsappNumber || '', userId]);
+        } else {
+            await tx.run(`INSERT INTO users (name, contact_number, telegram_username, whatsapp_number, created_at)
+                          VALUES (?, ?, ?, ?, ?)`, [name.trim(), contactNumber.trim(), telegramUsername || '', whatsappNumber || '', now]);
+            const createdUser = await tx.get(`SELECT id FROM users WHERE contact_number = ? ORDER BY id DESC`, [contactNumber.trim()]);
+            if (!createdUser) throw new Error('Unable to create user record');
+            userId = createdUser.id;
+        }
 
-    // 3. Insert or update license
-    const licenseId = `LIC-${deviceId.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 8)}`;
-    await run(`INSERT INTO licenses (license_id, device_id, user_id, status, created_at)
-               VALUES (?, ?, ?, 'PENDING', ?)
-               ON CONFLICT(device_id) DO UPDATE SET
-                   user_id = EXCLUDED.user_id,
-                   status = 'PENDING',
-                   rejection_reason = NULL`,
-        [licenseId, deviceId, userId, now]);
+        await tx.run(`INSERT INTO devices (device_id, user_id, model, brand, app_version, status, last_seen_at, created_at)
+                      VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)
+                      ON CONFLICT(device_id) DO UPDATE SET
+                          user_id = EXCLUDED.user_id, model = EXCLUDED.model, brand = EXCLUDED.brand,
+                          app_version = EXCLUDED.app_version, last_seen_at = EXCLUDED.last_seen_at, status = 'PENDING'`,
+            [cleanId, userId, deviceModel || '', deviceBrand || '', appVersion || 1, now, now]);
 
-    // 4. Log approval request
-    await run(`INSERT INTO approval_requests (device_id, user_name, contact_number, telegram_username, whatsapp_number, status, created_at)
-               VALUES (?, ?, ?, ?, ?, 'PENDING', ?)`,
-        [deviceId, name, contactNumber, telegramUsername, whatsappNumber, now]);
+        const licenseId = `LIC-${cleanId.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 8)}`;
+        await tx.run(`INSERT INTO licenses (license_id, device_id, user_id, status, created_at, activation_at, expiration_at, duration_seconds, duration_days, is_lifetime)
+                      VALUES (?, ?, ?, 'PENDING', ?, NULL, NULL, NULL, NULL, 0)
+                      ON CONFLICT(device_id) DO UPDATE SET user_id = EXCLUDED.user_id, status = 'PENDING', rejection_reason = NULL`,
+            [licenseId, cleanId, userId, now]);
 
-    return getLicense(deviceId);
+        // Avoid creating duplicate pending requests when the same request is retried.
+        const pendingRequest = await tx.get(`SELECT id FROM approval_requests WHERE device_id = ? AND status = 'PENDING' ORDER BY id DESC`, [cleanId]);
+        if (pendingRequest) {
+            await tx.run(`UPDATE approval_requests SET user_name = ?, contact_number = ?, telegram_username = ?, whatsapp_number = ? WHERE id = ?`,
+                [name.trim(), contactNumber.trim(), telegramUsername || '', whatsappNumber || '', pendingRequest.id]);
+        } else {
+            await tx.run(`INSERT INTO approval_requests (device_id, user_name, contact_number, telegram_username, whatsapp_number, status, created_at)
+                          VALUES (?, ?, ?, ?, ?, 'PENDING', ?)`,
+                [cleanId, name.trim(), contactNumber.trim(), telegramUsername || '', whatsappNumber || '', now]);
+        }
+    });
+
+    invalidateLicenseCache(cleanId);
+    return getLicense(cleanId);
 }
 
 async function approveDeviceDuration(deviceId, durationSeconds, isLifetime = false, adminId = 'SYSTEM') {
-    invalidateLicenseCache(deviceId);
-    const now = Date.now();
+    const cleanId = String(deviceId || '').trim();
+    if (!cleanId) throw new Error('Device ID is required');
     const seconds = normalizeLicenseDurationSeconds(durationSeconds, isLifetime);
+    const now = Date.now();
     const expirationAt = isLifetime ? null : now + (seconds * 1000);
     const durationDays = isLifetime ? null : Math.floor(seconds / 86400);
 
-    await run(`UPDATE licenses SET
-               status = 'APPROVED',
-               duration_days = ?,
-               duration_seconds = ?,
-               is_lifetime = ?,
-               approved_at = ?,
-               activation_at = ?,
-               expiration_at = ?,
-               rejection_reason = NULL
-               WHERE device_id = ?`,
-        [durationDays, isLifetime ? null : seconds, isLifetime ? 1 : 0, now, now, expirationAt, deviceId]);
+    await withTransaction(async (tx) => {
+        const existing = await tx.get(`SELECT status FROM licenses WHERE device_id = ?`, [cleanId]);
+        if (!existing) throw new Error('Device not found');
+        if (existing.status === 'BLOCKED') throw new Error('Device is blocked; use Unblock Device instead.');
+        if (existing.status === 'APPROVED') throw new Error('Device already has an active license; use Extend License if more time is needed.');
 
-    await run(`UPDATE devices SET status = 'APPROVED' WHERE device_id = ?`, [deviceId]);
-    await run(`UPDATE approval_requests SET status = 'APPROVED', resolved_at = ?, resolved_by = ? WHERE device_id = ? AND status = 'PENDING'`,
-        [now, adminId, deviceId]);
+        const licenseUpdate = await tx.run(`UPDATE licenses SET
+                   status = 'APPROVED', duration_days = ?, duration_seconds = ?, is_lifetime = ?,
+                   approved_at = ?, activation_at = ?, expiration_at = ?, rejection_reason = NULL
+                   WHERE device_id = ?`,
+            [durationDays, isLifetime ? null : seconds, isLifetime ? 1 : 0, now, now, expirationAt, cleanId]);
+        if (licenseUpdate.changes !== 1) throw new Error('License approval could not be applied');
 
-    const detail = isLifetime ? 'Approved for Lifetime' : `Approved for ${formatDurationForLog(seconds)}`;
-    await run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
-               VALUES (?, 'APPROVE', ?, ?, ?)`, [adminId, deviceId, detail, now]);
-    return getLicense(deviceId);
+        const deviceUpdate = await tx.run(`UPDATE devices SET status = 'APPROVED' WHERE device_id = ?`, [cleanId]);
+        if (deviceUpdate.changes !== 1) throw new Error('Device status could not be updated');
+
+        await tx.run(`UPDATE approval_requests SET status = 'APPROVED', resolved_at = ?, resolved_by = ?
+                      WHERE device_id = ? AND status = 'PENDING'`, [now, adminId, cleanId]);
+        const detail = isLifetime ? 'Approved for Lifetime' : `Approved for ${formatDurationForLog(seconds)}`;
+        await tx.run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
+                      VALUES (?, 'APPROVE', ?, ?, ?)`, [adminId, cleanId, detail, now]);
+    });
+
+    invalidateLicenseCache(cleanId);
+    return getLicense(cleanId);
 }
 
 async function approveDevice(deviceId, durationDays, isLifetime = false, adminId = 'SYSTEM') {
@@ -405,85 +487,129 @@ async function approveDevice(deviceId, durationDays, isLifetime = false, adminId
 }
 
 async function rejectDevice(deviceId, reason = 'Application requirements not met', adminId = 'SYSTEM') {
-    invalidateLicenseCache(deviceId);
+    const cleanId = String(deviceId || '').trim();
+    if (!cleanId) throw new Error('Device ID is required');
     const now = Date.now();
-    await run(`UPDATE licenses SET status = 'REJECTED', rejection_reason = ? WHERE device_id = ?`, [reason, deviceId]);
-    await run(`UPDATE devices SET status = 'REJECTED' WHERE device_id = ?`, [deviceId]);
-    await run(`UPDATE approval_requests SET status = 'REJECTED', resolved_at = ?, resolved_by = ?, resolution_notes = ? WHERE device_id = ? AND status = 'PENDING'`,
-        [now, adminId, reason, deviceId]);
-    await run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
-               VALUES (?, 'REJECT', ?, ?, ?)`, [adminId, deviceId, `Rejected: ${reason}`, now]);
-    return getLicense(deviceId);
+    await withTransaction(async (tx) => {
+        const existing = await tx.get(`SELECT status FROM licenses WHERE device_id = ?`, [cleanId]);
+        if (!existing) throw new Error('Device not found');
+        await tx.run(`UPDATE licenses SET status = 'REJECTED', rejection_reason = ? WHERE device_id = ?`, [reason, cleanId]);
+        await tx.run(`UPDATE devices SET status = 'REJECTED' WHERE device_id = ?`, [cleanId]);
+        await tx.run(`UPDATE approval_requests SET status = 'REJECTED', resolved_at = ?, resolved_by = ?, resolution_notes = ?
+                      WHERE device_id = ? AND status = 'PENDING'`, [now, adminId, reason, cleanId]);
+        await tx.run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
+                      VALUES (?, 'REJECT', ?, ?, ?)`, [adminId, cleanId, `Rejected: ${reason}`, now]);
+    });
+    invalidateLicenseCache(cleanId);
+    return getLicense(cleanId);
 }
 
 async function blockDevice(deviceId, adminId = 'SYSTEM') {
-    invalidateLicenseCache(deviceId);
+    const cleanId = String(deviceId || '').trim();
+    if (!cleanId) throw new Error('Device ID is required');
     const now = Date.now();
-    const existing = await getLicense(deviceId);
-    if (!existing) throw new Error('Device not found');
-    await run(`UPDATE licenses SET status = 'BLOCKED' WHERE device_id = ?`, [deviceId]);
-    await run(`UPDATE devices SET status = 'BLOCKED' WHERE device_id = ?`, [deviceId]);
-    await run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
-               VALUES (?, 'BLOCK', ?, ?, ?)`, [adminId, deviceId, 'Device blocked; previous license timestamps preserved', now]);
-    return getLicense(deviceId);
+    await withTransaction(async (tx) => {
+        const existing = await tx.get(`SELECT status, is_lifetime, expiration_at FROM licenses WHERE device_id = ?`, [cleanId]);
+        if (!existing) throw new Error('Device not found');
+        if (existing.status === 'BLOCKED') throw new Error('Device is already blocked');
+        if (existing.status !== 'APPROVED') throw new Error(`Cannot block device while status is ${existing.status}`);
+        if (!existing.is_lifetime && existing.expiration_at && now >= existing.expiration_at) {
+            throw new Error('License is already expired');
+        }
+        const licenseUpdate = await tx.run(`UPDATE licenses SET status = 'BLOCKED' WHERE device_id = ?`, [cleanId]);
+        const deviceUpdate = await tx.run(`UPDATE devices SET status = 'BLOCKED' WHERE device_id = ?`, [cleanId]);
+        if (licenseUpdate.changes !== 1 || deviceUpdate.changes !== 1) throw new Error('Block operation was not fully applied');
+        await tx.run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
+                      VALUES (?, 'BLOCK', ?, ?, ?)`, [adminId, cleanId, 'Device blocked; license timestamps preserved', now]);
+    });
+    invalidateLicenseCache(cleanId);
+    return getLicense(cleanId);
 }
 
-async function unblockDeviceDuration(deviceId, durationSeconds, adminId = 'SYSTEM') {
-    invalidateLicenseCache(deviceId);
+async function unblockDeviceDuration(deviceId, durationSeconds, isLifetime = false, adminId = 'SYSTEM') {
+    const cleanId = String(deviceId || '').trim();
+    if (!cleanId) throw new Error('Device ID is required');
+    const seconds = normalizeLicenseDurationSeconds(durationSeconds, isLifetime);
     const now = Date.now();
-    const existing = await getLicense(deviceId);
-    if (!existing) throw new Error('Device not found');
-    const seconds = normalizeLicenseDurationSeconds(durationSeconds);
-    const expirationAt = now + seconds * 1000;
-    const durationDays = Math.floor(seconds / 86400);
-    await run(`UPDATE licenses SET status = 'APPROVED', duration_days = ?, duration_seconds = ?, is_lifetime = 0,
-               activation_at = ?, expiration_at = ?, rejection_reason = NULL WHERE device_id = ?`,
-        [durationDays, seconds, now, expirationAt, deviceId]);
-    await run(`UPDATE devices SET status = 'APPROVED' WHERE device_id = ?`, [deviceId]);
-    await run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
-               VALUES (?, 'UNBLOCK', ?, ?, ?)`,
-        [adminId, deviceId, `Unblocked with ${formatDurationForLog(seconds)}`, now]);
-    return getLicense(deviceId);
+    const expirationAt = isLifetime ? null : now + seconds * 1000;
+    const durationDays = isLifetime ? null : Math.floor(seconds / 86400);
+
+    await withTransaction(async (tx) => {
+        const existing = await tx.get(`SELECT status FROM licenses WHERE device_id = ?`, [cleanId]);
+        if (!existing) throw new Error('Device not found');
+        if (existing.status !== 'BLOCKED') throw new Error(`Device is not blocked (current status: ${existing.status})`);
+
+        const licenseUpdate = await tx.run(`UPDATE licenses SET status = 'APPROVED', duration_days = ?, duration_seconds = ?,
+                   is_lifetime = ?, activation_at = ?, expiration_at = ?, rejection_reason = NULL WHERE device_id = ?`,
+            [durationDays, isLifetime ? null : seconds, isLifetime ? 1 : 0, now, expirationAt, cleanId]);
+        const deviceUpdate = await tx.run(`UPDATE devices SET status = 'APPROVED' WHERE device_id = ?`, [cleanId]);
+        if (licenseUpdate.changes !== 1 || deviceUpdate.changes !== 1) throw new Error('Unblock operation was not fully applied');
+        await tx.run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
+                      VALUES (?, 'UNBLOCK', ?, ?, ?)`,
+            [adminId, cleanId, isLifetime ? 'Unblocked with Lifetime access' : `Unblocked with ${formatDurationForLog(seconds)}`, now]);
+    });
+
+    invalidateLicenseCache(cleanId);
+    return getLicense(cleanId);
 }
 
 async function unblockDevice(deviceId, restoreStatus = 'APPROVED', durationDays = 30, adminId = 'SYSTEM') {
-    if (restoreStatus === 'APPROVED') return unblockDeviceDuration(deviceId, (Number(durationDays) || 30) * 86400, adminId);
-    invalidateLicenseCache(deviceId);
+    if (restoreStatus === 'APPROVED') return unblockDeviceDuration(deviceId, (Number(durationDays) || 30) * 86400, false, adminId);
+    const cleanId = String(deviceId || '').trim();
     const now = Date.now();
-    await run(`UPDATE licenses SET status = ? WHERE device_id = ?`, [restoreStatus, deviceId]);
-    await run(`UPDATE devices SET status = ? WHERE device_id = ?`, [restoreStatus, deviceId]);
-    await run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
-               VALUES (?, 'UNBLOCK', ?, ?, ?)`, [adminId, deviceId, `Unblocked as ${restoreStatus}`, now]);
-    return getLicense(deviceId);
+    await withTransaction(async (tx) => {
+        const existing = await tx.get(`SELECT status FROM licenses WHERE device_id = ?`, [cleanId]);
+        if (!existing) throw new Error('Device not found');
+        if (existing.status !== 'BLOCKED') throw new Error(`Device is not blocked (current status: ${existing.status})`);
+        await tx.run(`UPDATE licenses SET status = ? WHERE device_id = ?`, [restoreStatus, cleanId]);
+        await tx.run(`UPDATE devices SET status = ? WHERE device_id = ?`, [restoreStatus, cleanId]);
+        await tx.run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
+                      VALUES (?, 'UNBLOCK', ?, ?, ?)`, [adminId, cleanId, `Unblocked as ${restoreStatus}`, now]);
+    });
+    invalidateLicenseCache(cleanId);
+    return getLicense(cleanId);
 }
 
 async function revokeDevice(deviceId, adminId = 'SYSTEM') {
-    invalidateLicenseCache(deviceId);
+    const cleanId = String(deviceId || '').trim();
+    if (!cleanId) throw new Error('Device ID is required');
     const now = Date.now();
-    await run(`UPDATE licenses SET status = 'REVOKED', expiration_at = ? WHERE device_id = ?`, [now, deviceId]);
-    await run(`UPDATE devices SET status = 'REVOKED' WHERE device_id = ?`, [deviceId]);
-    await run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
-               VALUES (?, 'REVOKE', ?, 'License revoked by administrator', ?)`, [adminId, deviceId, now]);
-    return getLicense(deviceId);
+    await withTransaction(async (tx) => {
+        const existing = await tx.get(`SELECT status FROM licenses WHERE device_id = ?`, [cleanId]);
+        if (!existing) throw new Error('Device not found');
+        await tx.run(`UPDATE licenses SET status = 'REVOKED', expiration_at = ? WHERE device_id = ?`, [now, cleanId]);
+        await tx.run(`UPDATE devices SET status = 'REVOKED' WHERE device_id = ?`, [cleanId]);
+        await tx.run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
+                      VALUES (?, 'REVOKE', ?, 'License revoked by administrator', ?)`, [adminId, cleanId, now]);
+    });
+    invalidateLicenseCache(cleanId);
+    return getLicense(cleanId);
 }
 
 async function extendLicenseDuration(deviceId, additionalSeconds, adminId = 'SYSTEM') {
-    invalidateLicenseCache(deviceId);
-    const lic = await getLicense(deviceId);
-    if (!lic) throw new Error('Device not found');
-    if (lic.isLifetime) throw new Error('Lifetime licenses do not need extension');
+    const cleanId = String(deviceId || '').trim();
+    if (!cleanId) throw new Error('Device ID is required');
     const seconds = normalizeLicenseDurationSeconds(additionalSeconds);
     const now = Date.now();
-    const currentExpiry = (lic.expirationTimestamp && lic.expirationTimestamp > now) ? lic.expirationTimestamp : now;
-    const newExpiry = currentExpiry + seconds * 1000;
-    const totalSeconds = Math.max(1, Math.floor((newExpiry - (lic.activationTimestamp || now)) / 1000));
-    await run(`UPDATE licenses SET status = 'APPROVED', expiration_at = ?, duration_seconds = ?, duration_days = ?, is_lifetime = 0 WHERE device_id = ?`,
-        [newExpiry, totalSeconds, Math.floor(totalSeconds / 86400), deviceId]);
-    await run(`UPDATE devices SET status = 'APPROVED' WHERE device_id = ?`, [deviceId]);
-    await run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
-               VALUES (?, 'EXTEND', ?, ?, ?)`,
-        [adminId, deviceId, `Extended by ${formatDurationForLog(seconds)}. New expiration: ${new Date(newExpiry).toISOString()}`, now]);
-    return getLicense(deviceId);
+    let newExpiry = null;
+    await withTransaction(async (tx) => {
+        const lic = await tx.get(`SELECT status, is_lifetime, activation_at, expiration_at FROM licenses WHERE device_id = ?`, [cleanId]);
+        if (!lic) throw new Error('Device not found');
+        if (lic.is_lifetime) throw new Error('Lifetime licenses do not need extension');
+        if (lic.status !== 'APPROVED') throw new Error(`Cannot extend license while status is ${lic.status}`);
+        const currentExpiry = (lic.expiration_at && lic.expiration_at > now) ? lic.expiration_at : now;
+        newExpiry = currentExpiry + seconds * 1000;
+        const activation = lic.activation_at || now;
+        const totalSeconds = Math.max(1, Math.floor((newExpiry - activation) / 1000));
+        await tx.run(`UPDATE licenses SET status = 'APPROVED', expiration_at = ?, duration_seconds = ?, duration_days = ?, is_lifetime = 0 WHERE device_id = ?`,
+            [newExpiry, totalSeconds, Math.floor(totalSeconds / 86400), cleanId]);
+        await tx.run(`UPDATE devices SET status = 'APPROVED' WHERE device_id = ?`, [cleanId]);
+        await tx.run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
+                      VALUES (?, 'EXTEND', ?, ?, ?)`,
+            [adminId, cleanId, `Extended by ${formatDurationForLog(seconds)}. New expiration: ${new Date(newExpiry).toISOString()}`, now]);
+    });
+    invalidateLicenseCache(cleanId);
+    return getLicense(cleanId);
 }
 
 async function extendLicense(deviceId, additionalDays, adminId = 'SYSTEM') {
@@ -507,7 +633,7 @@ function formatDurationForLog(seconds) {
     const d = Math.floor(s / 86400); const h = Math.floor((s % 86400) / 3600);
     const m = Math.floor((s % 3600) / 60); const sec = s % 60;
     const parts = [];
-    if (d) parts.push(`${d}d`); if (h) parts.push(`${h}h`); if (m) parts.push(`${m}m`); if (sec && !parts.length) parts.push(`${sec}s`);
+    if (d) parts.push(`${d}d`); if (h) parts.push(`${h}h`); if (m) parts.push(`${m}m`); if (sec) parts.push(`${sec}s`);
     return parts.join(' ') || '0s';
 }
 

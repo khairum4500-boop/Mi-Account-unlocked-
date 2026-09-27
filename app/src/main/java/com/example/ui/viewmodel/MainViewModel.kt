@@ -49,6 +49,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var lastSubmitTime = 0L
     private var lastRefreshTime = 0L
     private var countdownJob: Job? = null
+    private var liveRefreshJob: Job? = null
 
     init {
         val deviceId = DeviceIdProvider.getDeviceId(application)
@@ -63,6 +64,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         refreshAll()
+    }
+
+    fun onForeground() {
+        startTimestampCountdown(_uiState.value.license)
+        liveRefreshJob?.cancel()
+        liveRefreshJob = viewModelScope.launch {
+            while (true) {
+                delay(30_000L)
+                refreshAll()
+            }
+        }
+    }
+
+    fun onBackground() {
+        liveRefreshJob?.cancel()
+        liveRefreshJob = null
+        countdownJob?.cancel()
+        countdownJob = null
     }
 
 
@@ -87,13 +106,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         countdownJob?.cancel()
         submitCooldownJob?.cancel()
+        liveRefreshJob?.cancel()
         super.onCleared()
     }
 
     fun refreshAll() {
         val now = System.currentTimeMillis()
-        if (now - lastRefreshTime < 2000L && _uiState.value.isRefreshing) {
-            return // Debounce refresh requests
+        if (now - lastRefreshTime < 2000L) {
+            return // Debounce rapid refresh requests
         }
         lastRefreshTime = now
 

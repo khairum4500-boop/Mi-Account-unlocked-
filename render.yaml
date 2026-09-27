@@ -15,7 +15,7 @@ services:
       - key: TELEGRAM_BOT_TOKEN
         sync: false # Set securely in Render dashboard
       - key: ADMIN_TELEGRAM_IDS
-        value: "7585875519"
+        sync: false
       - key: ADMIN_API_KEY
         generateValue: true
       - key: DEFAULT_ADMIN_TELEGRAM

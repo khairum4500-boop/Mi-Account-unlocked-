@@ -1,3 +1,16 @@
+
+## Reliability hardening (latest revision)
+
+- License/device mutations use database transactions so Block, Unblock, Approve, Reject, Revoke, and Extend cannot leave the two status tables out of sync.
+- A BLOCKED device cannot self-reset to PENDING by submitting another approval request.
+- Approve refuses to silently overwrite an already-active or BLOCKED license.
+- Unblock validates that the device is actually BLOCKED and supports exact durations or Lifetime.
+- Telegram mutation buttons use device-level concurrency locks and return visible errors instead of silently failing.
+- Android refreshes license status while the app is foregrounded and stops polling/timers when backgrounded.
+- Confirmed server 404 responses no longer fall back to a stale cached license.
+- Trusted server time is anchored to elapsed realtime while the process/device session remains alive, with the defined wall-clock fallback after reboot.
+- The GitHub Actions APK workflow runs the server license lifecycle tests before building the APK.
+
 # MI Unlock — Full Architecture, Backend & Telegram Bot Guide
 
 ## 1. System Architecture Overview

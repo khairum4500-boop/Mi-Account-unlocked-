@@ -20,6 +20,13 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
+    - name: Set up Node.js 20
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: npm
+        cache-dependency-path: server/package-lock.json
+
     - name: Prepare build environment
       run: |
         chmod +x gradlew
@@ -31,8 +38,16 @@ jobs:
           keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
         fi
 
+    - name: Install server dependencies
+      working-directory: server
+      run: npm ci
+
+    - name: Run server license-flow tests
+      working-directory: server
+      run: npm test
+
     - name: Build with Gradle
-      run: ./gradlew assembleDebug --no-daemon --stacktrace
+      run: ./gradlew testDebugUnitTest assembleDebug --no-daemon --stacktrace
 
     - name: Upload APK
       uses: actions/upload-artifact@v4

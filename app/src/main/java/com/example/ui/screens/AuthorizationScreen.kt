@@ -62,6 +62,7 @@ import com.example.ui.theme.TechDarkBorder
 import com.example.ui.theme.TechDarkSurface
 import com.example.ui.theme.TechDarkSurfaceVariant
 import com.example.ui.viewmodel.MainUiState
+import com.example.ui.localization.AppLocalization
 import com.example.ui.localization.tr
 import com.example.util.AdminContactHelper
 import java.text.SimpleDateFormat

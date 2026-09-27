@@ -10,8 +10,12 @@ const bot = botToken ? new Telegraf(botToken) : null;
 
 // Global error handler to prevent bot or Node process from crashing
 if (bot) {
-    bot.catch((err, ctx) => {
+    bot.catch(async (err, ctx) => {
         console.error(`[BOT ERROR] Error for update type ${ctx?.updateType}:`, err.message || err);
+        try {
+            if (ctx?.callbackQuery) await ctx.answerCbQuery('Something went wrong. Please refresh and try again.', { show_alert: true });
+            else if (ctx?.chat?.id) await ctx.reply('❌ Something went wrong. Please try again.');
+        } catch (_) {}
     });
 }
 
@@ -24,16 +28,14 @@ function escapeHtml(text) {
         .replace(/>/g, '&gt;');
 }
 
-// Allowlist of admin Telegram user IDs (e.g. "7585875519")
+// Allowlist of admin Telegram user IDs supplied by ADMIN_TELEGRAM_IDS
 async function getAdminIds() {
     const raw = process.env.ADMIN_TELEGRAM_IDS || '';
     const ids = raw.split(',').map(s => s.trim()).filter(Boolean);
     const set = new Set(ids);
 
-    // Default admin ID from project configuration
-    set.add('7585875519');
-
-    // Also include any dynamically registered admin chat IDs saved from /start
+    // Only explicitly configured administrators are trusted. Dynamic chat IDs are
+    // allowed only when they belong to an already-authorized administrator.
     try {
         const saved = await db.getSingleSetting('registered_admin_chat_ids');
         if (saved) {
@@ -65,14 +67,14 @@ async function registerAdminChatId(chatId) {
 
 async function isAdmin(ctx) {
     const adminIds = await getAdminIds();
-    if (adminIds.length === 0) return true; // If none configured, allow
+    if (adminIds.length === 0) return false; // Fail closed when no admin allowlist is configured
     const userId = String(ctx.from?.id);
     return adminIds.includes(userId);
 }
 
-// Anti-Spam Rate Limiting: 3-Second Cooldown per user
+// Lightweight interaction debounce; device-level locks protect actual mutations.
 const userLastActionTime = new Map();
-const USER_COOLDOWN_MS = 800;
+const USER_COOLDOWN_MS = 350;
 
 // Periodic cleanup of rate-limit map to prevent memory leaks
 setInterval(() => {
@@ -86,6 +88,32 @@ setInterval(() => {
 
 // Concurrency Locks: Prevent concurrent double-actions on the same device
 const activeDeviceLocks = new Set();
+
+async function withDeviceLock(deviceId, operation) {
+    const key = String(deviceId || '').trim();
+    if (!key) throw new Error('Device ID is required');
+    if (activeDeviceLocks.has(key)) throw new Error('This device is already being processed. Please wait a moment.');
+    activeDeviceLocks.add(key);
+    try { return await operation(); }
+    finally { activeDeviceLocks.delete(key); }
+}
+
+async function answerAction(ctx, text, options = {}) {
+    try { await ctx.answerCbQuery(text, options); } catch (_) {}
+}
+
+async function editOrReply(ctx, text, extra = {}) {
+    try {
+        if (ctx.callbackQuery?.message) return await ctx.editMessageText(text, extra);
+    } catch (error) {
+        const message = String(error?.description || error?.message || '');
+        // Telegram reports this when the message is already up-to-date or no longer editable.
+        if (!/message is not modified|message to edit not found|message can't be edited/i.test(message)) {
+            console.error('[BOT EDIT ERROR]:', message);
+        }
+    }
+    return ctx.reply(text, extra);
+}
 
 // Outbound Message Queue: Smoothly handles thousands of concurrent notifications without Telegram 429 errors
 const outboundMessageQueue = [];
@@ -144,7 +172,7 @@ if (bot) {
                     const remainingSeconds = Math.ceil((USER_COOLDOWN_MS - elapsed) / 1000);
                     if (ctx.callbackQuery) {
                         try {
-                            await ctx.answerCbQuery(`⏳ অনুগ্রহ করে ${remainingSeconds} সেকেন্ড অপেক্ষা করুন... (800ms Cooldown)`, { show_alert: false });
+                            await ctx.answerCbQuery(`⏳ Please wait a moment before sending another action.`, { show_alert: false });
                         } catch (_) {}
                     }
                     return; // Drop spam interaction safely without crashing
@@ -360,9 +388,6 @@ function getUnblockKeyboard(deviceId) {
 if (bot) {
     bot.start(async (ctx) => {
         try {
-            if (ctx.chat?.id) {
-                await registerAdminChatId(ctx.chat.id);
-            }
             const stats = await db.getStatistics();
             const welcome = `🛡️ <b>MI UNLOCK ADMIN PANEL</b>\n\n` +
                             `Welcome, <b>${escapeHtml(ctx.from.first_name || 'Admin')}</b>!\n` +
@@ -590,17 +615,19 @@ if (bot) {
 
     // Revoke action
     bot.action(/rev_(.+)/, async (ctx) => {
+        const deviceId = ctx.match[1];
         try {
-            await ctx.answerCbQuery('License revoked');
-            const deviceId = ctx.match[1];
             const adminId = String(ctx.from?.username || ctx.from?.id || 'Admin');
-            const updated = await db.revokeDevice(deviceId, adminId);
-            return ctx.editMessageText(`🛑 <b>LICENSE REVOKED</b>\n\n${formatDeviceCard(updated)}`, {
+            const updated = await withDeviceLock(deviceId, () => db.revokeDevice(deviceId, adminId));
+            await answerAction(ctx, 'License revoked.');
+            return editOrReply(ctx, `🛑 <b>LICENSE REVOKED</b>\n\n${formatDeviceCard(updated)}`, {
                 parse_mode: 'HTML',
                 ...getDeviceActionKeyboard(deviceId, updated.status)
             });
         } catch (e) {
             console.error('[BOT revoke error]:', e);
+            await answerAction(ctx, 'Revoke failed.');
+            return editOrReply(ctx, `❌ <b>Revoke failed</b>\n<code>${escapeHtml(e.message)}</code>`, { parse_mode:'HTML' });
         }
     });
 
@@ -625,17 +652,19 @@ if (bot) {
 
     // Block action
     bot.action(/blk_(.+)/, async (ctx) => {
+        const deviceId = ctx.match[1];
         try {
-            await ctx.answerCbQuery('Device blocked');
-            const deviceId = ctx.match[1];
             const adminId = String(ctx.from?.username || ctx.from?.id || 'Admin');
-            const updated = await db.blockDevice(deviceId, adminId);
-            return ctx.editMessageText(`🚫 <b>DEVICE BLOCKED</b>\n\n${formatDeviceCard(updated)}`, {
+            const updated = await withDeviceLock(deviceId, () => db.blockDevice(deviceId, adminId));
+            await answerAction(ctx, 'Device blocked successfully.');
+            return editOrReply(ctx, `🚫 <b>DEVICE BLOCKED</b>\n\n${formatDeviceCard(updated)}`, {
                 parse_mode: 'HTML',
                 ...getDeviceActionKeyboard(deviceId, updated.status)
             });
         } catch (e) {
             console.error('[BOT block error]:', e);
+            await answerAction(ctx, 'Block failed.');
+            return editOrReply(ctx, `❌ <b>Block failed</b>\n<code>${escapeHtml(e.message)}</code>`, { parse_mode: 'HTML', ...getDeviceActionKeyboard(deviceId, 'APPROVED') });
         }
     });
 
@@ -653,22 +682,22 @@ if (bot) {
     bot.action(/dounblk_(.+)_lifetime/, async (ctx) => {
         const deviceId = ctx.match[1];
         try {
-            await ctx.answerCbQuery('Unblocking for lifetime...');
             const adminId = String(ctx.from?.username || ctx.from?.id || 'Admin');
-            const updated = await db.approveDeviceDuration(deviceId, 0, true, adminId);
-            return ctx.editMessageText(`🔓 <b>DEVICE UNBLOCKED</b>\nDuration: <b>♾️ Lifetime</b>\n\n${formatDeviceCard(updated)}`, { parse_mode: 'HTML', ...getDeviceActionKeyboard(deviceId, updated.status) });
-        } catch (e) { console.error('[BOT unblock lifetime error]:', e); try { await ctx.reply(`❌ ${escapeHtml(e.message)}`, {parse_mode:'HTML'}); } catch (_) {} }
+            const updated = await withDeviceLock(deviceId, () => db.unblockDeviceDuration(deviceId, 0, true, adminId));
+            await answerAction(ctx, 'Device unblocked successfully.');
+            return editOrReply(ctx, `🔓 <b>DEVICE UNBLOCKED</b>\nDuration: <b>♾️ Lifetime</b>\n\n${formatDeviceCard(updated)}`, { parse_mode: 'HTML', ...getDeviceActionKeyboard(deviceId, updated.status) });
+        } catch (e) { console.error('[BOT unblock lifetime error]:', e); await answerAction(ctx, 'Unblock failed.'); return editOrReply(ctx, `❌ <b>Unblock failed</b>\n<code>${escapeHtml(e.message)}</code>`, { parse_mode:'HTML', ...getDeviceActionKeyboard(deviceId, 'BLOCKED') }); }
     });
 
     bot.action(/dounblk_(.+)_(\d+)/, async (ctx) => {
         const deviceId = ctx.match[1];
         try {
-            await ctx.answerCbQuery('Unblocking...');
             const seconds = parseInt(ctx.match[2], 10);
             const adminId = String(ctx.from?.username || ctx.from?.id || 'Admin');
-            const updated = await db.unblockDeviceDuration(deviceId, seconds, adminId);
-            return ctx.editMessageText(`🔓 <b>DEVICE UNBLOCKED</b>\nDuration: <b>${formatDuration(seconds)}</b>\n\n${formatDeviceCard(updated)}`, { parse_mode: 'HTML', ...getDeviceActionKeyboard(deviceId, updated.status) });
-        } catch (e) { console.error('[BOT unblock error]:', e); try { await ctx.reply(`❌ ${escapeHtml(e.message)}`, {parse_mode:'HTML'}); } catch (_) {} }
+            const updated = await withDeviceLock(deviceId, () => db.unblockDeviceDuration(deviceId, seconds, false, adminId));
+            await answerAction(ctx, 'Device unblocked successfully.');
+            return editOrReply(ctx, `🔓 <b>DEVICE UNBLOCKED</b>\nDuration: <b>${formatDuration(seconds)}</b>\n\n${formatDeviceCard(updated)}`, { parse_mode: 'HTML', ...getDeviceActionKeyboard(deviceId, updated.status) });
+        } catch (e) { console.error('[BOT unblock error]:', e); await answerAction(ctx, 'Unblock failed.'); return editOrReply(ctx, `❌ <b>Unblock failed</b>\n<code>${escapeHtml(e.message)}</code>`, { parse_mode:'HTML', ...getDeviceActionKeyboard(deviceId, 'BLOCKED') }); }
     });
 
     bot.action(/customunblk_(.+)/, async (ctx) => {
@@ -702,18 +731,20 @@ if (bot) {
 
     // Execute extension
     bot.action(/doext_(.+)_(\d+)/, async (ctx) => {
+        const deviceId = ctx.match[1];
         try {
-            await ctx.answerCbQuery('License extended');
-            const deviceId = ctx.match[1];
             const seconds = parseInt(ctx.match[2], 10);
             const adminId = String(ctx.from?.username || ctx.from?.id || 'Admin');
-            const updated = await db.extendLicenseDuration(deviceId, seconds, adminId);
-            return ctx.editMessageText(`🎉 <b>LICENSE EXTENDED BY +${formatDuration(seconds)}!</b>\n\n${formatDeviceCard(updated)}`,  {
+            const updated = await withDeviceLock(deviceId, () => db.extendLicenseDuration(deviceId, seconds, adminId));
+            await answerAction(ctx, 'License extended successfully.');
+            return editOrReply(ctx, `🎉 <b>LICENSE EXTENDED BY +${formatDuration(seconds)}!</b>\n\n${formatDeviceCard(updated)}`, {
                 parse_mode: 'HTML',
                 ...getDeviceActionKeyboard(deviceId, updated.status)
             });
         } catch (e) {
             console.error('[BOT doext error]:', e);
+            await answerAction(ctx, 'Extension failed.');
+            return editOrReply(ctx, `❌ <b>Extension failed</b>\n<code>${escapeHtml(e.message)}</code>`, { parse_mode:'HTML', ...getDeviceActionKeyboard(deviceId, 'APPROVED') });
         }
     });
 
@@ -730,18 +761,18 @@ if (bot) {
             return ctx.reply('❎ Cancelled.');
         }
         const parsed = parseDurationInput(ctx.message.text);
-        if (!parsed || parsed.lifetime) {
-            return ctx.reply('❌ Invalid duration. Try <code>1h</code>, <code>2h30m</code>, <code>90m</code>, or <code>2d</code>.', {parse_mode:'HTML'});
+        if (!parsed || (parsed.lifetime && pending.mode === 'extend')) {
+            return ctx.reply('❌ Invalid duration. Try <code>1h</code>, <code>2h30m</code>, <code>90m</code>, <code>2d</code>, or <code>lifetime</code> for approval/unblock.', {parse_mode:'HTML'});
         }
         const deviceId = pending.deviceId;
         const adminId = String(ctx.from?.username || ctx.from?.id || 'Admin');
         try {
             let updated;
-            if (pending.mode === 'approve') updated = await db.approveDeviceDuration(deviceId, parsed.seconds, false, adminId);
-            else if (pending.mode === 'extend') updated = await db.extendLicenseDuration(deviceId, parsed.seconds, adminId);
-            else updated = await db.unblockDeviceDuration(deviceId, parsed.seconds, adminId);
+            if (pending.mode === 'approve') updated = await withDeviceLock(deviceId, () => db.approveDeviceDuration(deviceId, parsed.seconds, parsed.lifetime, adminId));
+            else if (pending.mode === 'extend') updated = await withDeviceLock(deviceId, () => db.extendLicenseDuration(deviceId, parsed.seconds, adminId));
+            else updated = await withDeviceLock(deviceId, () => db.unblockDeviceDuration(deviceId, parsed.seconds, parsed.lifetime, adminId));
             const verb = pending.mode === 'approve' ? 'APPROVED' : pending.mode === 'extend' ? 'EXTENDED' : 'UNBLOCKED';
-            return ctx.replyWithHTML(`✅ <b>${verb}</b>\nDuration: <b>${formatDuration(parsed.seconds)}</b>\n\n${formatDeviceCard(updated)}`, getDeviceActionKeyboard(deviceId, updated.status));
+            return ctx.replyWithHTML(`✅ <b>${verb}</b>\nDuration: <b>${formatDuration(parsed.seconds, parsed.lifetime)}</b>\n\n${formatDeviceCard(updated)}`, getDeviceActionKeyboard(deviceId, updated.status));
         } catch (e) {
             console.error('[BOT custom duration error]:', e);
             return ctx.reply(`❌ ${escapeHtml(e.message)}`, {parse_mode:'HTML'});

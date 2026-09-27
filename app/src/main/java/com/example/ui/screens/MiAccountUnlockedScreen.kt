@@ -383,8 +383,24 @@ private fun CanonicalOutputCard(loginData: LoginData) {
                 Spacer(Modifier.width(6.dp)); Text(tr("COPY DECODED OUTPUT"))
             }
             Spacer(modifier = Modifier.height(10.dp))
-            Text(if (payload.isValid) tr("✓ HEX VALID • ✓ DECODE SUCCESSFUL • ✓ JSON MATCH") else tr("✗ OUTPUT VALIDATION FAILED"), color = if (payload.isValid) StatusApproved else Color.Red, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            if (payload.isValid) {
+                ValidationRow(tr("✓ HEX VALID"), true)
+                ValidationRow(tr("✓ DECODE SUCCESSFUL"), true)
+                ValidationRow(tr("✓ JSON MATCH"), true)
+            } else {
+                ValidationRow(tr("✗ OUTPUT VALIDATION FAILED"), false)
+            }
         }
+    }
+}
+
+@Composable
+private fun ValidationRow(text: String, valid: Boolean) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(text = text, color = if (valid) StatusApproved else Color.Red, fontWeight = FontWeight.Bold, fontSize = 12.sp)
     }
 }
 

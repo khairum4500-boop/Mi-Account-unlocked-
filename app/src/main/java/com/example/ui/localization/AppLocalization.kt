@@ -196,6 +196,28 @@ private val completeTranslations: Map<AppLanguage, Map<String, String>> = mapOf(
     AppLanguage.EN to emptyMap()
 )
 
+private val validationTranslations: Map<AppLanguage, Map<String, String>> = mapOf(
+    AppLanguage.BN to mapOf(
+        "✓ HEX VALID" to "✓ HEX সঠিক", "✓ DECODE SUCCESSFUL" to "✓ DECODE সফল", "✓ JSON MATCH" to "✓ JSON মিলেছে", "✗ OUTPUT VALIDATION FAILED" to "✗ OUTPUT যাচাই ব্যর্থ"
+    ),
+    AppLanguage.HI to mapOf(
+        "✓ HEX VALID" to "✓ HEX मान्य", "✓ DECODE SUCCESSFUL" to "✓ डीकोड सफल", "✓ JSON MATCH" to "✓ JSON मेल", "✗ OUTPUT VALIDATION FAILED" to "✗ आउटपुट सत्यापन विफल"
+    ),
+    AppLanguage.AR to mapOf(
+        "✓ HEX VALID" to "✓ HEX صالح", "✓ DECODE SUCCESSFUL" to "✓ فك الترميز ناجح", "✓ JSON MATCH" to "✓ تطابق JSON", "✗ OUTPUT VALIDATION FAILED" to "✗ فشل التحقق من الإخراج"
+    ),
+    AppLanguage.UR to mapOf(
+        "✓ HEX VALID" to "✓ HEX درست ہے", "✓ DECODE SUCCESSFUL" to "✓ ڈی کوڈ کامیاب", "✓ JSON MATCH" to "✓ JSON مماثل", "✗ OUTPUT VALIDATION FAILED" to "✗ آؤٹ پٹ کی تصدیق ناکام"
+    ),
+    AppLanguage.ZH to mapOf(
+        "✓ HEX VALID" to "✓ HEX 有效", "✓ DECODE SUCCESSFUL" to "✓ 解码成功", "✓ JSON MATCH" to "✓ JSON 匹配", "✗ OUTPUT VALIDATION FAILED" to "✗ 输出验证失败"
+    ),
+    AppLanguage.TR to mapOf(
+        "✓ HEX VALID" to "✓ HEX GEÇERLİ", "✓ DECODE SUCCESSFUL" to "✓ ÇÖZÜMLEME BAŞARILI", "✓ JSON MATCH" to "✓ JSON EŞLEŞTİ", "✗ OUTPUT VALIDATION FAILED" to "✗ ÇIKTI DOĞRULAMASI BAŞARISIZ"
+    ),
+    AppLanguage.EN to emptyMap()
+)
+
 object AppLocalization {
     private const val PREFS = "mi_unlock_language"
     private const val KEY = "language"
@@ -204,7 +226,7 @@ object AppLocalization {
     @Volatile private var currentLanguage: AppLanguage = AppLanguage.EN
     fun initialize(context: Context) { val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null); val selected = AppLanguage.entries.firstOrNull { it.code == saved } ?: AppLanguage.EN; currentLanguage = selected; _language.value = selected }
     fun setLanguage(context: Context, language: AppLanguage) { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, language.code).apply(); currentLanguage = language; _language.value = language }
-    fun text(language: AppLanguage, source: String): String = dictionaries[language]?.get(source) ?: fallbackTranslations[language]?.get(source) ?: extendedTranslations[language]?.get(source) ?: uiTranslations[language]?.get(source) ?: commonErrorTranslations[language]?.get(source) ?: finalTranslations[language]?.get(source) ?: completeTranslations[language]?.get(source) ?: completenessTranslations[language]?.get(source) ?: additionalUiTranslations[language]?.get(source) ?: processingErrorTranslations[language]?.get(source) ?: source
+    fun text(language: AppLanguage, source: String): String = dictionaries[language]?.get(source) ?: fallbackTranslations[language]?.get(source) ?: extendedTranslations[language]?.get(source) ?: uiTranslations[language]?.get(source) ?: commonErrorTranslations[language]?.get(source) ?: validationTranslations[language]?.get(source) ?: finalTranslations[language]?.get(source) ?: completeTranslations[language]?.get(source) ?: completenessTranslations[language]?.get(source) ?: additionalUiTranslations[language]?.get(source) ?: processingErrorTranslations[language]?.get(source) ?: source
     fun locale(language: AppLanguage): Locale = Locale.forLanguageTag(language.code)
 }
 

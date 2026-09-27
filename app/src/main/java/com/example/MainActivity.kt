@@ -1,7 +1,5 @@
 package com.example
 
-import com.example.ui.localization.tr
-
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -50,11 +48,15 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import com.example.ui.components.LanguageSelector
 import com.example.ui.localization.AppLocalization
 import com.example.ui.localization.LocalAppLanguage
 import com.example.ui.localization.tr
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.components.AdminContactCard
 import com.example.ui.screens.AuthorizationScreen
@@ -131,6 +133,25 @@ fun MiUnlockApp(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var showAdminContactDialog by remember { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> viewModel.onForeground()
+                Lifecycle.Event.ON_STOP -> viewModel.onBackground()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            viewModel.onForeground()
+        }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.onBackground()
+        }
+    }
 
     LaunchedEffect(uiState.errorMessage) {
         uiState.errorMessage?.let {
