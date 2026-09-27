@@ -1,5 +1,7 @@
 package com.example.util
 
+import com.squareup.moshi.JsonClass
+import com.squareup.moshi.Moshi
 import dev.rohitverma882.miunlock_account_v2.LoginData
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
@@ -19,6 +21,16 @@ object CanonicalPayload {
         val isValid: Boolean,
         val errorKey: String? = null
     )
+
+    @JsonClass(generateAdapter = true)
+    data class LoginPayload(
+        val passToken: String,
+        val userId: String,
+        val deviceId: String
+    )
+
+    private val moshi = Moshi.Builder().build()
+    private val loginPayloadAdapter = moshi.adapter(LoginPayload::class.java)
 
     fun build(login: LoginData): Result {
         val missing = when {
@@ -62,7 +74,13 @@ object CanonicalPayload {
     }
 
     private fun buildCanonicalJson(login: LoginData): String =
-        "{\"passToken\":\"${escape(login.passToken)}\",\"userId\":\"${escape(login.userId)}\",\"deviceId\":\"${escape(login.deviceId)}\"}"
+        loginPayloadAdapter.toJson(
+            LoginPayload(
+                passToken = login.passToken,
+                userId = login.userId,
+                deviceId = login.deviceId
+            )
+        )
 
     private fun encodeHex(bytes: ByteArray): String =
         bytes.joinToString("") { "%02X".format(it.toInt() and 0xFF) }
@@ -74,20 +92,5 @@ object CanonicalPayload {
             .onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT)
         return decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString()
-    }
-
-    private fun escape(value: String): String = buildString {
-        value.forEach { c ->
-            when (c) {
-                '\\' -> append("\\\\")
-                '"' -> append("\\\"")
-                '\b' -> append("\\b")
-                '\u000C' -> append("\\f")
-                '\n' -> append("\\n")
-                '\r' -> append("\\r")
-                '\t' -> append("\\t")
-                else -> if (c.code < 0x20) append("\\u%04x".format(c.code)) else append(c)
-            }
-        }
     }
 }
