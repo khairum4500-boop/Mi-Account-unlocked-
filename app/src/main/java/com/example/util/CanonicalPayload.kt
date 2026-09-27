@@ -1,8 +1,7 @@
 package com.example.util
 
-import com.squareup.moshi.JsonClass
-import com.squareup.moshi.Moshi
 import dev.rohitverma882.miunlock_account_v2.LoginData
+import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
@@ -10,10 +9,12 @@ import org.json.JSONException
 import org.json.JSONObject
 
 /**
- * Canonical JSON is created exactly once. HEX is derived only from that exact UTF-8 JSON.
- * The decode path validates the bytes and exact string equality before reporting success.
+ * Canonical JSON is created exactly once.
+ * HEX is derived only from that exact UTF-8 JSON.
+ * The decode path validates UTF-8 and exact string equality.
  */
 object CanonicalPayload {
+
     data class Result(
         val json: String,
         val hex: String,
@@ -22,16 +23,6 @@ object CanonicalPayload {
         val errorKey: String? = null
     )
 
-    @JsonClass(generateAdapter = true)
-    data class LoginPayload(
-        val passToken: String,
-        val userId: String,
-        val deviceId: String
-    )
-
-    private val moshi = Moshi.Builder().build()
-    private val loginPayloadAdapter = moshi.adapter(LoginPayload::class.java)
-
     fun build(login: LoginData): Result {
         val missing = when {
             login.passToken.isBlank() -> "Missing passToken"
@@ -39,58 +30,159 @@ object CanonicalPayload {
             login.deviceId.isBlank() -> "Missing deviceId"
             else -> null
         }
-        if (missing != null) return Result("", "", null, false, missing)
+
+        if (missing != null) {
+            return Result(
+                json = "",
+                hex = "",
+                decodedJson = null,
+                isValid = false,
+                errorKey = missing
+            )
+        }
 
         val canonicalJson = buildCanonicalJson(login)
+
         try {
-            // Validate the exact canonical string as JSON before deriving HEX.
             val parsed = JSONObject(canonicalJson)
+
             require(parsed.getString("passToken") == login.passToken)
             require(parsed.getString("userId") == login.userId)
             require(parsed.getString("deviceId") == login.deviceId)
-        } catch (e: JSONException) {
-            return Result(canonicalJson, "", null, false, "Invalid JSON")
-        } catch (e: IllegalArgumentException) {
-            return Result(canonicalJson, "", null, false, "Invalid JSON")
+
+            require(parsed.length() == 3)
+        } catch (_: JSONException) {
+            return Result(
+                json = canonicalJson,
+                hex = "",
+                decodedJson = null,
+                isValid = false,
+                errorKey = "Invalid JSON"
+            )
+        } catch (_: IllegalArgumentException) {
+            return Result(
+                json = canonicalJson,
+                hex = "",
+                decodedJson = null,
+                isValid = false,
+                errorKey = "Invalid JSON"
+            )
         }
 
-        val utf8: ByteArray
-        val hex: String
-        try {
-            utf8 = canonicalJson.toByteArray(StandardCharsets.UTF_8)
-            hex = encodeHex(utf8)
-        } catch (e: Exception) {
-            return Result(canonicalJson, "", null, false, "HEX encoding error")
+        val utf8: ByteArray = try {
+            canonicalJson.toByteArray(StandardCharsets.UTF_8)
+        } catch (_: Exception) {
+            return Result(
+                json = canonicalJson,
+                hex = "",
+                decodedJson = null,
+                isValid = false,
+                errorKey = "UTF-8 encoding error"
+            )
+        }
+
+        val hex = try {
+            encodeHex(utf8)
+        } catch (_: Exception) {
+            return Result(
+                json = canonicalJson,
+                hex = "",
+                decodedJson = null,
+                isValid = false,
+                errorKey = "HEX encoding error"
+            )
         }
 
         return try {
             val decoded = decodeHexUtf8(hex)
-            Result(canonicalJson, hex, decoded, canonicalJson == decoded, if (canonicalJson == decoded) null else "OUTPUT VALIDATION FAILED")
-        } catch (e: IllegalArgumentException) {
-            Result(canonicalJson, hex, null, false, "HEX decoding error")
-        } catch (e: CharacterCodingException) {
-            Result(canonicalJson, hex, null, false, "UTF-8 decoding error")
+            val matches = canonicalJson == decoded
+
+            Result(
+                json = canonicalJson,
+                hex = hex,
+                decodedJson = decoded,
+                isValid = matches,
+                errorKey = if (matches) null else "OUTPUT VALIDATION FAILED"
+            )
+        } catch (_: IllegalArgumentException) {
+            Result(
+                json = canonicalJson,
+                hex = hex,
+                decodedJson = null,
+                isValid = false,
+                errorKey = "HEX decoding error"
+            )
+        } catch (_: CharacterCodingException) {
+            Result(
+                json = canonicalJson,
+                hex = hex,
+                decodedJson = null,
+                isValid = false,
+                errorKey = "UTF-8 decoding error"
+            )
         }
     }
 
-    private fun buildCanonicalJson(login: LoginData): String =
-        loginPayloadAdapter.toJson(
-            LoginPayload(
-                passToken = login.passToken,
-                userId = login.userId,
-                deviceId = login.deviceId
-            )
-        )
+    /**
+     * Exact canonical key order:
+     * passToken
+     * userId
+     * deviceId
+     *
+     * JSONObject is used only for JSON escaping/serialization.
+     * The final string is assembled explicitly so key order is guaranteed.
+     */
+    private fun buildCanonicalJson(login: LoginData): String {
+        val passToken = JSONObject.quote(login.passToken)
+        val userId = JSONObject.quote(login.userId)
+        val deviceId = JSONObject.quote(login.deviceId)
+
+        return buildString {
+            append("{")
+            append("\"passToken\":")
+            append(passToken)
+            append(",")
+            append("\"userId\":")
+            append(userId)
+            append(",")
+            append("\"deviceId\":")
+            append(deviceId)
+            append("}")
+        }
+    }
 
     private fun encodeHex(bytes: ByteArray): String =
-        bytes.joinToString("") { "%02X".format(it.toInt() and 0xFF) }
+        buildString(bytes.size * 2) {
+            for (byte in bytes) {
+                append("%02X".format(byte.toInt() and 0xFF))
+            }
+        }
 
     private fun decodeHexUtf8(hex: String): String {
-        require(hex.length % 2 == 0 && hex.matches(Regex("[0-9A-Fa-f]*"))) { "Invalid HEX" }
-        val bytes = ByteArray(hex.length / 2) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
-        val decoder = StandardCharsets.UTF_8.newDecoder()
+        require(
+            hex.length % 2 == 0 &&
+                hex.matches(Regex("[0-9A-Fa-f]*"))
+        ) {
+            "Invalid HEX"
+        }
+
+        val bytes = ByteArray(hex.length / 2)
+
+        for (i in bytes.indices) {
+            val start = i * 2
+            bytes[i] = hex
+                .substring(start, start + 2)
+                .toInt(16)
+                .toByte()
+        }
+
+        val decoder = StandardCharsets.UTF_8
+            .newDecoder()
             .onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT)
-        return decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString()
+
+        return decoder
+            .decode(ByteBuffer.wrap(bytes))
+            .toString()
     }
 }
