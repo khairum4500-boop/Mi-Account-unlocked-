@@ -52,7 +52,7 @@
         <activity
             android:name="dev.rohitverma882.miunlock_account_v2.LoginActivity"
             android:exported="false"
-            android:label="Mi Account Login"
+            android:label="@string/login_activity_title"
             android:configChanges="orientation|screenSize"
             android:windowSoftInputMode="adjustResize" />
     </application>

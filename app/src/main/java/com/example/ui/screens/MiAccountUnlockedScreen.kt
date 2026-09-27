@@ -49,6 +49,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.text.LocalTextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.MiOrange
@@ -57,8 +59,10 @@ import com.example.ui.theme.TechCyan
 import com.example.ui.theme.TechDarkSurface
 import com.example.ui.theme.TechDarkSurfaceVariant
 import com.example.ui.viewmodel.MainUiState
+import com.example.ui.localization.tr
 import dev.rohitverma882.miunlock_account_v2.LoginData
 import dev.rohitverma882.miunlock_account_v2.LoginActivity
+import com.example.util.CanonicalPayload
 
 @Composable
 fun MiAccountUnlockedScreen(
@@ -98,7 +102,7 @@ fun MiAccountUnlockedScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Default.VerifiedUser,
-                        contentDescription = "Active License",
+                        contentDescription = tr("Active License"),
                         tint = StatusApproved,
                         modifier = Modifier.size(24.dp)
                     )
@@ -108,16 +112,16 @@ fun MiAccountUnlockedScreen(
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Device Authorized & Active",
+                        text = tr("Device Authorized & Active"),
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
                     )
                     Text(
                         text = if (state.license?.isLifetime == true) {
-                            "Lifetime Access Granted"
+                            tr("Lifetime Access Granted")
                         } else {
-                            "Remaining: ${state.license?.daysRemaining ?: 0} Days"
+                            tr("Remaining: %s").format(formatRemaining(state.remainingMillis))
                         },
                         fontSize = 13.sp,
                         color = StatusApproved
@@ -150,7 +154,7 @@ fun MiAccountUnlockedScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Login,
-                            contentDescription = "Login",
+                            contentDescription = tr("Login"),
                             tint = MiOrange,
                             modifier = Modifier.size(36.dp)
                         )
@@ -159,7 +163,7 @@ fun MiAccountUnlockedScreen(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Text(
-                        text = "Sign In with Xiaomi Account",
+                        text = tr("Sign In with Xiaomi Account"),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
@@ -168,7 +172,7 @@ fun MiAccountUnlockedScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "Log into your Xiaomi / Mi Account to capture the Unlock Token (passToken, userId, deviceId) required for bootloader unlocking.",
+                        text = tr("Log into your Xiaomi / Mi Account to capture the Unlock Token (passToken, userId, deviceId) required for bootloader unlocking."),
                         fontSize = 13.sp,
                         color = Color(0xFF9CA3AF),
                         lineHeight = 18.sp,
@@ -192,7 +196,7 @@ fun MiAccountUnlockedScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "OPEN MI ACCOUNT LOGIN",
+                            text = tr("OPEN MI ACCOUNT LOGIN"),
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
                             color = Color.White
@@ -235,13 +239,13 @@ fun MiAccountUnlockedScreen(
 
                         Column {
                             Text(
-                                text = "Mi Account Details",
+                                text = tr("Mi Account Details"),
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
                             )
                             Text(
-                                text = "Token captured successfully",
+                                text = tr("Token captured successfully"),
                                 fontSize = 12.sp,
                                 color = StatusApproved
                             )
@@ -252,28 +256,28 @@ fun MiAccountUnlockedScreen(
 
                     // Token items
                     TokenItemCard(
-                        title = "User ID",
+                        title = tr("User ID"),
                         value = loginData.userId,
                         icon = Icons.Default.AccountCircle,
-                        onCopy = { copyToClipboard(context, "User ID", loginData.userId) }
+                        onCopy = { copyToClipboard(context, tr("User ID"), loginData.userId, tr("Copied")) }
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
 
                     TokenItemCard(
-                        title = "Device ID",
+                        title = tr("Device ID"),
                         value = loginData.deviceId,
                         icon = Icons.Default.PhoneAndroid,
-                        onCopy = { copyToClipboard(context, "Device ID", loginData.deviceId) }
+                        onCopy = { copyToClipboard(context, tr("Device ID"), loginData.deviceId, tr("Copied")) }
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
 
                     TokenItemCard(
-                        title = "Pass Token",
+                        title = tr("Pass Token"),
                         value = loginData.passToken,
                         icon = Icons.Default.Key,
-                        onCopy = { copyToClipboard(context, "Pass Token", loginData.passToken) }
+                        onCopy = { copyToClipboard(context, tr("Pass Token"), loginData.passToken, tr("Copied")) }
                     )
 
                     Spacer(modifier = Modifier.height(20.dp))
@@ -282,7 +286,7 @@ fun MiAccountUnlockedScreen(
                     Button(
                         onClick = {
                             val termuxPayload = "USER_ID=\"${loginData.userId}\"\nDEVICE_ID=\"${loginData.deviceId}\"\nPASS_TOKEN=\"${loginData.passToken}\""
-                            copyToClipboard(context, "Termux MiUnlock Payload", termuxPayload)
+                            copyToClipboard(context, "Termux MiUnlock Payload", termuxPayload, tr("Copied"))
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -298,7 +302,7 @@ fun MiAccountUnlockedScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "COPY ALL FOR TERMUX",
+                            text = tr("COPY ALL FOR TERMUX"),
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp,
                             color = Color.Black
@@ -306,6 +310,9 @@ fun MiAccountUnlockedScreen(
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    CanonicalOutputCard(loginData)
 
                     // Logout / Switch Account
                     OutlinedButton(
@@ -324,7 +331,7 @@ fun MiAccountUnlockedScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "LOGOUT & SWITCH ACCOUNT",
+                            text = tr("LOGOUT & SWITCH ACCOUNT"),
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 13.sp,
                             color = Color(0xFFEF4444)
@@ -334,6 +341,55 @@ fun MiAccountUnlockedScreen(
             }
         }
     }
+}
+
+
+@Composable
+private fun formatRemaining(milliseconds: Long): String {
+    var seconds = (milliseconds.coerceAtLeast(0L) / 1000L)
+    val days = seconds / 86400; seconds %= 86400
+    val hours = seconds / 3600; seconds %= 3600
+    val minutes = seconds / 60; seconds %= 60
+    return "%02d %s : %02d %s : %02d %s : %02d %s".format(days, tr("Days"), hours, tr("Hours"), minutes, tr("Minutes"), seconds, tr("Seconds"))
+}
+
+@Composable
+private fun CanonicalOutputCard(loginData: LoginData) {
+    val context = LocalContext.current
+    val payload = remember(loginData.passToken, loginData.userId, loginData.deviceId) { CanonicalPayload.build(loginData) }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = TechDarkSurface),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            if (payload.errorKey != null) {
+                Text(tr(payload.errorKey!!), color = Color.Red, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            Text(tr("Original Output (HEX)"), fontWeight = FontWeight.Bold, color = Color.White)
+            Text(payload.hex, fontFamily = FontFamily.Monospace, fontSize = 10.sp, color = TechCyan, modifier = Modifier.padding(top = 8.dp), style = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr))
+            OutlinedButton(enabled = payload.isValid, onClick = { copyToClipboard(context, tr("Original Output"), payload.hex, tr("Copied")) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp)); Text(tr("COPY ORIGINAL OUTPUT"))
+            }
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(tr("Decoded Output (JSON)"), fontWeight = FontWeight.Bold, color = Color.White)
+            Text(payload.decodedJson ?: payload.json, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color.White, modifier = Modifier.padding(top = 8.dp), style = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr))
+            OutlinedButton(enabled = payload.isValid, onClick = { copyToClipboard(context, tr("Decoded Output"), payload.json, tr("Copied")) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp)); Text(tr("COPY DECODED OUTPUT"))
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(if (payload.isValid) tr("✓ HEX VALID • ✓ DECODE SUCCESSFUL • ✓ JSON MATCH") else tr("✗ OUTPUT VALIDATION FAILED"), color = if (payload.isValid) StatusApproved else Color.Red, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        }
+    }
+}
+
+private fun copyToClipboard(context: Context, label: String, value: String, confirmation: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
+    Toast.makeText(context, confirmation, Toast.LENGTH_SHORT).show()
 }
 
 @Composable
@@ -385,7 +441,7 @@ private fun TokenItemCard(
             ) {
                 Icon(
                     imageVector = Icons.Default.ContentCopy,
-                    contentDescription = "Copy $title",
+                    contentDescription = "${tr("Copy")} $title",
                     tint = TechCyan,
                     modifier = Modifier.size(18.dp)
                 )
@@ -394,9 +450,3 @@ private fun TokenItemCard(
     }
 }
 
-private fun copyToClipboard(context: Context, label: String, text: String) {
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    val clip = ClipData.newPlainText(label, text)
-    clipboard.setPrimaryClip(clip)
-    Toast.makeText(context, "$label copied to clipboard!", Toast.LENGTH_SHORT).show()
-}

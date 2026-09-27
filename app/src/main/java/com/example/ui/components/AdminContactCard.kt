@@ -1,5 +1,7 @@
 package com.example.ui.components
 
+import com.example.ui.localization.tr
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -81,7 +83,7 @@ fun AdminContactCard(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Send,
-                        contentDescription = "Admin Support",
+                        contentDescription = tr("Admin Support"),
                         tint = MiOrange,
                         modifier = Modifier.size(18.dp)
                     )
@@ -89,13 +91,13 @@ fun AdminContactCard(
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
-                        text = "Administrator Support",
+                        text = tr("Administrator Support"),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
                     )
                     Text(
-                        text = "Contact for license activation, renewal & inquiries",
+                        text = tr("Contact for license activation, renewal & inquiries"),
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFF9CA3AF)
                     )
@@ -107,38 +109,38 @@ fun AdminContactCard(
             // Contact Items
             ContactRowItem(
                 icon = Icons.Default.Send,
-                label = "Telegram",
+                label = tr("Telegram"),
                 value = telegram,
                 iconColor = TechCyan,
-                onCopy = { AdminContactHelper.copyToClipboard(context, telegram, "Telegram username") },
+                onCopy = { AdminContactHelper.copyToClipboard(context, telegram, tr("Telegram username"), tr("Copied")) },
                 onClick = { AdminContactHelper.openTelegram(context, telegram) }
             )
 
             ContactRowItem(
                 icon = Icons.Default.Message,
-                label = "WhatsApp",
+                label = tr("WhatsApp"),
                 value = whatsapp,
                 iconColor = Color(0xFF25D366),
-                onCopy = { AdminContactHelper.copyToClipboard(context, whatsapp, "WhatsApp number") },
-                onClick = { AdminContactHelper.openWhatsApp(context, whatsapp, "Hello Admin, inquiry for MI Unlock Device ID: $deviceId") }
+                onCopy = { AdminContactHelper.copyToClipboard(context, whatsapp, tr("WhatsApp number"), tr("Copied")) },
+                onClick = { AdminContactHelper.openWhatsApp(context, whatsapp, tr("Hello Admin, inquiry for MI Unlock Device ID: %s").format(deviceId), tr("Cannot open WhatsApp")) }
             )
 
             ContactRowItem(
                 icon = Icons.Default.Call,
-                label = "Call / Phone",
+                label = tr("Call / Phone"),
                 value = contactNumber,
                 iconColor = Color(0xFF38BDF8),
-                onCopy = { AdminContactHelper.copyToClipboard(context, contactNumber, "Contact number") },
-                onClick = { AdminContactHelper.callAdmin(context, contactNumber) }
+                onCopy = { AdminContactHelper.copyToClipboard(context, contactNumber, tr("Contact number"), tr("Copied")) },
+                onClick = { AdminContactHelper.callAdmin(context, contactNumber, tr("Cannot launch dialer")) }
             )
 
             ContactRowItem(
                 icon = Icons.Default.Email,
-                label = "Email",
+                label = tr("Email"),
                 value = email,
                 iconColor = Color(0xFFFB923C),
-                onCopy = { AdminContactHelper.copyToClipboard(context, email, "Admin email") },
-                onClick = { AdminContactHelper.sendEmail(context, email, deviceId = deviceId) }
+                onCopy = { AdminContactHelper.copyToClipboard(context, email, tr("Admin email"), tr("Copied")) },
+                onClick = { AdminContactHelper.sendEmail(context, email, deviceId = deviceId, subject = tr("MI Unlock License Request"), body = tr("Hello Admin,\n\nI need assistance with my MI Unlock license.\nDevice ID: %s\n").format(deviceId), errorPrefix = tr("Cannot open email client")) }
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -156,28 +158,28 @@ fun AdminContactCard(
                     shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = TechCyan.copy(alpha = 0.18f), contentColor = TechCyan)
                 ) {
-                    Text("Telegram", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(tr("Telegram"), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
 
                 Button(
-                    onClick = { AdminContactHelper.openWhatsApp(context, whatsapp, "Hello Admin, MI Unlock ID: $deviceId") },
+                    onClick = { AdminContactHelper.openWhatsApp(context, whatsapp, tr("Hello Admin, MI Unlock ID: %s").format(deviceId), tr("Cannot open WhatsApp")) },
                     modifier = Modifier
                         .weight(1f)
                         .testTag("action_whatsapp"),
                     shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366).copy(alpha = 0.18f), contentColor = Color(0xFF25D366))
                 ) {
-                    Text("WhatsApp", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(tr("WhatsApp"), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
 
                 OutlinedButton(
-                    onClick = { AdminContactHelper.callAdmin(context, contactNumber) },
+                    onClick = { AdminContactHelper.callAdmin(context, contactNumber, tr("Cannot launch dialer")) },
                     modifier = Modifier
                         .weight(0.9f)
                         .testTag("action_call"),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("Call", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(tr("Call"), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -228,7 +230,7 @@ private fun ContactRowItem(
         ) {
             Icon(
                 imageVector = Icons.Outlined.ContentCopy,
-                contentDescription = "Copy $label",
+                contentDescription = "${tr("Copy")} $label",
                 tint = Color(0xFF9CA3AF),
                 modifier = Modifier.size(16.dp)
             )

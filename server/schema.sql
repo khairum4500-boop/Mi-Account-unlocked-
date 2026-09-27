@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS licenses (
     device_id TEXT NOT NULL UNIQUE,
     user_id INTEGER,
     status TEXT NOT NULL DEFAULT 'PENDING',
-    duration_days INTEGER, -- NULL for lifetime
+    duration_days INTEGER, -- Legacy whole-day duration (kept for compatibility)
+    duration_seconds INTEGER, -- Exact granted duration in seconds; supports hours/minutes
     is_lifetime INTEGER DEFAULT 0,
     created_at INTEGER NOT NULL,
     approved_at INTEGER,

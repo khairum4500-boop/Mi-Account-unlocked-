@@ -128,6 +128,8 @@ class LicenseRepository(private val preferences: LicensePreferences) {
         }
     }
 
+    fun trustedNowMillis(): Long = preferences.trustedNowMillis()
+
     fun getCachedLicense(deviceId: String): LicenseStatusResponse? {
         return preferences.getCachedLicense(deviceId)
     }

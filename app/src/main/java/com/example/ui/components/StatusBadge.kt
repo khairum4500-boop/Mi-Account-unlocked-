@@ -1,5 +1,7 @@
 package com.example.ui.components
 
+import com.example.ui.localization.tr
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -32,16 +34,16 @@ fun StatusBadge(
     val (bgColor, dotColor, label) = when (status.uppercase()) {
         "APPROVED" -> {
             if (daysRemaining != null && daysRemaining <= 3 && daysRemaining > 0) {
-                Triple(StatusExpiring.copy(alpha = 0.18f), StatusExpiring, "Expiring Soon ($daysRemaining d)")
+                Triple(StatusExpiring.copy(alpha = 0.18f), StatusExpiring, tr("Expiring Soon (%sd)").format(daysRemaining))
             } else {
-                Triple(StatusApproved.copy(alpha = 0.18f), StatusApproved, "Active / Approved")
+                Triple(StatusApproved.copy(alpha = 0.18f), StatusApproved, tr("Active / Approved"))
             }
         }
-        "PENDING" -> Triple(StatusPending.copy(alpha = 0.18f), StatusPending, "Waiting Approval")
-        "EXPIRED" -> Triple(StatusRejected.copy(alpha = 0.18f), StatusRejected, "License Expired")
-        "BLOCKED" -> Triple(StatusBlocked.copy(alpha = 0.18f), StatusBlocked, "Device Blocked")
-        "REJECTED" -> Triple(StatusRejected.copy(alpha = 0.18f), StatusRejected, "Request Rejected")
-        else -> Triple(Color(0xFF6B7280).copy(alpha = 0.18f), Color(0xFF9CA3AF), "Not Registered")
+        "PENDING" -> Triple(StatusPending.copy(alpha = 0.18f), StatusPending, tr("Waiting Approval"))
+        "EXPIRED" -> Triple(StatusRejected.copy(alpha = 0.18f), StatusRejected, tr("License Expired"))
+        "BLOCKED" -> Triple(StatusBlocked.copy(alpha = 0.18f), StatusBlocked, tr("Device Blocked"))
+        "REJECTED" -> Triple(StatusRejected.copy(alpha = 0.18f), StatusRejected, tr("Request Rejected"))
+        else -> Triple(Color(0xFF6B7280).copy(alpha = 0.18f), Color(0xFF9CA3AF), tr("Not Registered"))
     }
 
     Box(

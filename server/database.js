@@ -72,6 +72,7 @@ async function initDb() {
         const schemaPath = path.join(__dirname, 'schema_pg.sql');
         const schema = fs.readFileSync(schemaPath, 'utf8');
         await pgPool.query(schema);
+        await pgPool.query(`ALTER TABLE licenses ADD COLUMN IF NOT EXISTS duration_seconds BIGINT`);
 
         // Seed default settings if empty
         const defaults = [
@@ -107,26 +108,33 @@ async function initDb() {
                     return reject(err);
                 }
 
-                const defaults = [
-                    ['app_name', 'MI Unlock'],
-                    ['min_version', '1'],
-                    ['latest_version', '1'],
-                    ['update_url', 'https://t.me/itz_khairum'],
-                    ['maintenance_mode', 'false'],
-                    ['announcement', ''],
-                    ['admin_telegram', '@itz_khairum'],
-                    ['admin_contact', '01577430152'],
-                    ['admin_whatsapp', '01735047020'],
-                    ['admin_email', 'siam162536@gmail.com']
-                ];
+                // Backward-compatible migration for existing SQLite databases.
+                sqliteDb.run('ALTER TABLE licenses ADD COLUMN duration_seconds INTEGER', (migrationErr) => {
+                    if (migrationErr && !String(migrationErr.message || '').toLowerCase().includes('duplicate column')) {
+                        console.warn('[DB] duration_seconds migration:', migrationErr.message);
+                    }
 
-                const stmt = sqliteDb.prepare(`INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)`);
-                const now = Date.now();
-                defaults.forEach(([k, v]) => stmt.run(k, v, now));
-                stmt.finalize();
+                    const defaults = [
+                        ['app_name', 'MI Unlock'],
+                        ['min_version', '1'],
+                        ['latest_version', '1'],
+                        ['update_url', 'https://t.me/itz_khairum'],
+                        ['maintenance_mode', 'false'],
+                        ['announcement', ''],
+                        ['admin_telegram', '@itz_khairum'],
+                        ['admin_contact', '01577430152'],
+                        ['admin_whatsapp', '01735047020'],
+                        ['admin_email', 'siam162536@gmail.com']
+                    ];
 
-                console.log('[DB] SQLite database initialized successfully.');
-                resolve(sqliteDb);
+                    const stmt = sqliteDb.prepare(`INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)`);
+                    const now = Date.now();
+                    defaults.forEach(([k, v]) => stmt.run(k, v, now));
+                    stmt.finalize(() => {
+                        console.log('[DB] SQLite database initialized successfully.');
+                        resolve(sqliteDb);
+                    });
+                });
             });
         });
     }
@@ -242,7 +250,11 @@ async function getLicense(deviceId) {
 
     const cached = licenseCache.get(cleanId);
     if (cached && (now - cached.timestamp) < LICENSE_CACHE_TTL_MS) {
-        return cached.data;
+        const data = { ...cached.data, serverTime: now };
+        if (data.status === 'APPROVED' && !data.isLifetime && data.expirationTimestamp && now >= data.expirationTimestamp) {
+            data.status = 'EXPIRED';
+        }
+        return data;
     }
 
     const row = await get(`
@@ -251,6 +263,7 @@ async function getLicense(deviceId) {
             l.device_id,
             l.status,
             l.duration_days,
+            l.duration_seconds,
             l.is_lifetime,
             l.created_at,
             l.approved_at,
@@ -276,7 +289,7 @@ async function getLicense(deviceId) {
     let currentStatus = row.status;
 
     // Check expiration dynamically
-    if (currentStatus === 'APPROVED' && !row.is_lifetime && row.expiration_at && now > row.expiration_at) {
+    if (currentStatus === 'APPROVED' && !row.is_lifetime && row.expiration_at && now >= row.expiration_at) {
         currentStatus = 'EXPIRED';
         await run(`UPDATE licenses SET status = 'EXPIRED' WHERE device_id = ?`, [cleanId]);
         await run(`UPDATE devices SET status = 'EXPIRED' WHERE device_id = ?`, [cleanId]);
@@ -302,6 +315,7 @@ async function getLicense(deviceId) {
         notes: row.notes,
         rejectionReason: row.rejection_reason,
         daysRemaining: daysRemaining,
+        durationSeconds: Number(row.duration_seconds || 0),
         isLifetime: Boolean(row.is_lifetime),
         serverTime: now
     };
@@ -357,35 +371,37 @@ async function registerApprovalRequest(data) {
     return getLicense(deviceId);
 }
 
-async function approveDevice(deviceId, durationDays, isLifetime = false, adminId = 'SYSTEM') {
+async function approveDeviceDuration(deviceId, durationSeconds, isLifetime = false, adminId = 'SYSTEM') {
     invalidateLicenseCache(deviceId);
     const now = Date.now();
-    let expirationAt = null;
-
-    if (!isLifetime && durationDays > 0) {
-        expirationAt = now + (durationDays * 24 * 60 * 60 * 1000);
-    }
+    const seconds = normalizeLicenseDurationSeconds(durationSeconds, isLifetime);
+    const expirationAt = isLifetime ? null : now + (seconds * 1000);
+    const durationDays = isLifetime ? null : Math.floor(seconds / 86400);
 
     await run(`UPDATE licenses SET
                status = 'APPROVED',
                duration_days = ?,
+               duration_seconds = ?,
                is_lifetime = ?,
                approved_at = ?,
                activation_at = ?,
                expiration_at = ?,
                rejection_reason = NULL
                WHERE device_id = ?`,
-        [durationDays, isLifetime ? 1 : 0, now, now, expirationAt, deviceId]);
+        [durationDays, isLifetime ? null : seconds, isLifetime ? 1 : 0, now, now, expirationAt, deviceId]);
 
     await run(`UPDATE devices SET status = 'APPROVED' WHERE device_id = ?`, [deviceId]);
     await run(`UPDATE approval_requests SET status = 'APPROVED', resolved_at = ?, resolved_by = ? WHERE device_id = ? AND status = 'PENDING'`,
         [now, adminId, deviceId]);
 
+    const detail = isLifetime ? 'Approved for Lifetime' : `Approved for ${formatDurationForLog(seconds)}`;
     await run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
-               VALUES (?, 'APPROVE', ?, ?, ?)`,
-        [adminId, deviceId, `Approved for ${isLifetime ? 'Lifetime' : durationDays + ' days'}`, now]);
-
+               VALUES (?, 'APPROVE', ?, ?, ?)`, [adminId, deviceId, detail, now]);
     return getLicense(deviceId);
+}
+
+async function approveDevice(deviceId, durationDays, isLifetime = false, adminId = 'SYSTEM') {
+    return approveDeviceDuration(deviceId, isLifetime ? 0 : (Number(durationDays) || 0) * 86400, isLifetime, adminId);
 }
 
 async function rejectDevice(deviceId, reason = 'Application requirements not met', adminId = 'SYSTEM') {
@@ -395,44 +411,49 @@ async function rejectDevice(deviceId, reason = 'Application requirements not met
     await run(`UPDATE devices SET status = 'REJECTED' WHERE device_id = ?`, [deviceId]);
     await run(`UPDATE approval_requests SET status = 'REJECTED', resolved_at = ?, resolved_by = ?, resolution_notes = ? WHERE device_id = ? AND status = 'PENDING'`,
         [now, adminId, reason, deviceId]);
-
     await run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
-               VALUES (?, 'REJECT', ?, ?, ?)`,
-        [adminId, deviceId, `Rejected: ${reason}`, now]);
-
+               VALUES (?, 'REJECT', ?, ?, ?)`, [adminId, deviceId, `Rejected: ${reason}`, now]);
     return getLicense(deviceId);
 }
 
 async function blockDevice(deviceId, adminId = 'SYSTEM') {
     invalidateLicenseCache(deviceId);
     const now = Date.now();
+    const existing = await getLicense(deviceId);
+    if (!existing) throw new Error('Device not found');
     await run(`UPDATE licenses SET status = 'BLOCKED' WHERE device_id = ?`, [deviceId]);
     await run(`UPDATE devices SET status = 'BLOCKED' WHERE device_id = ?`, [deviceId]);
-
     await run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
-               VALUES (?, 'BLOCK', ?, 'Device blocked', ?)`,
-        [adminId, deviceId, now]);
+               VALUES (?, 'BLOCK', ?, ?, ?)`, [adminId, deviceId, 'Device blocked; previous license timestamps preserved', now]);
+    return getLicense(deviceId);
+}
 
+async function unblockDeviceDuration(deviceId, durationSeconds, adminId = 'SYSTEM') {
+    invalidateLicenseCache(deviceId);
+    const now = Date.now();
+    const existing = await getLicense(deviceId);
+    if (!existing) throw new Error('Device not found');
+    const seconds = normalizeLicenseDurationSeconds(durationSeconds);
+    const expirationAt = now + seconds * 1000;
+    const durationDays = Math.floor(seconds / 86400);
+    await run(`UPDATE licenses SET status = 'APPROVED', duration_days = ?, duration_seconds = ?, is_lifetime = 0,
+               activation_at = ?, expiration_at = ?, rejection_reason = NULL WHERE device_id = ?`,
+        [durationDays, seconds, now, expirationAt, deviceId]);
+    await run(`UPDATE devices SET status = 'APPROVED' WHERE device_id = ?`, [deviceId]);
+    await run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
+               VALUES (?, 'UNBLOCK', ?, ?, ?)`,
+        [adminId, deviceId, `Unblocked with ${formatDurationForLog(seconds)}`, now]);
     return getLicense(deviceId);
 }
 
 async function unblockDevice(deviceId, restoreStatus = 'APPROVED', durationDays = 30, adminId = 'SYSTEM') {
+    if (restoreStatus === 'APPROVED') return unblockDeviceDuration(deviceId, (Number(durationDays) || 30) * 86400, adminId);
     invalidateLicenseCache(deviceId);
     const now = Date.now();
-    if (restoreStatus === 'APPROVED') {
-        const expirationAt = now + (durationDays * 24 * 60 * 60 * 1000);
-        await run(`UPDATE licenses SET status = 'APPROVED', duration_days = ?, activation_at = ?, expiration_at = ?, rejection_reason = NULL WHERE device_id = ?`,
-            [durationDays, now, expirationAt, deviceId]);
-        await run(`UPDATE devices SET status = 'APPROVED' WHERE device_id = ?`, [deviceId]);
-    } else {
-        await run(`UPDATE licenses SET status = ? WHERE device_id = ?`, [restoreStatus, deviceId]);
-        await run(`UPDATE devices SET status = ? WHERE device_id = ?`, [restoreStatus, deviceId]);
-    }
-
+    await run(`UPDATE licenses SET status = ? WHERE device_id = ?`, [restoreStatus, deviceId]);
+    await run(`UPDATE devices SET status = ? WHERE device_id = ?`, [restoreStatus, deviceId]);
     await run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
-               VALUES (?, 'UNBLOCK', ?, ?, ?)`,
-        [adminId, deviceId, `Unblocked as ${restoreStatus}`, now]);
-
+               VALUES (?, 'UNBLOCK', ?, ?, ?)`, [adminId, deviceId, `Unblocked as ${restoreStatus}`, now]);
     return getLicense(deviceId);
 }
 
@@ -442,34 +463,52 @@ async function revokeDevice(deviceId, adminId = 'SYSTEM') {
     await run(`UPDATE licenses SET status = 'REVOKED', expiration_at = ? WHERE device_id = ?`, [now, deviceId]);
     await run(`UPDATE devices SET status = 'REVOKED' WHERE device_id = ?`, [deviceId]);
     await run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
-               VALUES (?, 'REVOKE', ?, 'License revoked by administrator', ?)`,
-        [adminId, deviceId, now]);
+               VALUES (?, 'REVOKE', ?, 'License revoked by administrator', ?)`, [adminId, deviceId, now]);
+    return getLicense(deviceId);
+}
+
+async function extendLicenseDuration(deviceId, additionalSeconds, adminId = 'SYSTEM') {
+    invalidateLicenseCache(deviceId);
+    const lic = await getLicense(deviceId);
+    if (!lic) throw new Error('Device not found');
+    if (lic.isLifetime) throw new Error('Lifetime licenses do not need extension');
+    const seconds = normalizeLicenseDurationSeconds(additionalSeconds);
+    const now = Date.now();
+    const currentExpiry = (lic.expirationTimestamp && lic.expirationTimestamp > now) ? lic.expirationTimestamp : now;
+    const newExpiry = currentExpiry + seconds * 1000;
+    const totalSeconds = Math.max(1, Math.floor((newExpiry - (lic.activationTimestamp || now)) / 1000));
+    await run(`UPDATE licenses SET status = 'APPROVED', expiration_at = ?, duration_seconds = ?, duration_days = ?, is_lifetime = 0 WHERE device_id = ?`,
+        [newExpiry, totalSeconds, Math.floor(totalSeconds / 86400), deviceId]);
+    await run(`UPDATE devices SET status = 'APPROVED' WHERE device_id = ?`, [deviceId]);
+    await run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
+               VALUES (?, 'EXTEND', ?, ?, ?)`,
+        [adminId, deviceId, `Extended by ${formatDurationForLog(seconds)}. New expiration: ${new Date(newExpiry).toISOString()}`, now]);
     return getLicense(deviceId);
 }
 
 async function extendLicense(deviceId, additionalDays, adminId = 'SYSTEM') {
-    invalidateLicenseCache(deviceId);
-    const lic = await getLicense(deviceId);
-    if (!lic) throw new Error('Device not found');
+    return extendLicenseDuration(deviceId, (Number(additionalDays) || 0) * 86400, adminId);
+}
 
-    const now = Date.now();
-    const currentExpiry = (lic.expirationTimestamp && lic.expirationTimestamp > now) ? lic.expirationTimestamp : now;
-    const newExpiry = currentExpiry + (additionalDays * 24 * 60 * 60 * 1000);
+const MIN_LICENSE_DURATION_SECONDS = 60;
+const MAX_LICENSE_DURATION_SECONDS = 10 * 365 * 24 * 60 * 60;
 
-    await run(`UPDATE licenses SET
-               status = 'APPROVED',
-               expiration_at = ?,
-               is_lifetime = 0
-               WHERE device_id = ?`,
-        [newExpiry, deviceId]);
+function normalizeLicenseDurationSeconds(value, allowLifetime = false) {
+    const seconds = Math.floor(Number(value));
+    if (allowLifetime && seconds === 0) return 0;
+    if (!Number.isSafeInteger(seconds) || seconds < MIN_LICENSE_DURATION_SECONDS || seconds > MAX_LICENSE_DURATION_SECONDS) {
+        throw new Error(`Duration must be between ${MIN_LICENSE_DURATION_SECONDS} seconds and ${MAX_LICENSE_DURATION_SECONDS} seconds`);
+    }
+    return seconds;
+}
 
-    await run(`UPDATE devices SET status = 'APPROVED' WHERE device_id = ?`, [deviceId]);
-
-    await run(`INSERT INTO admin_actions (admin_id, action_type, target_device_id, details, created_at)
-               VALUES (?, 'EXTEND', ?, ?, ?)`,
-        [adminId, deviceId, `Extended by ${additionalDays} days. New expiration: ${new Date(newExpiry).toISOString()}`, now]);
-
-    return getLicense(deviceId);
+function formatDurationForLog(seconds) {
+    const s = Math.max(0, Math.floor(Number(seconds) || 0));
+    const d = Math.floor(s / 86400); const h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60); const sec = s % 60;
+    const parts = [];
+    if (d) parts.push(`${d}d`); if (h) parts.push(`${h}h`); if (m) parts.push(`${m}m`); if (sec && !parts.length) parts.push(`${sec}s`);
+    return parts.join(' ') || '0s';
 }
 
 async function recordHeartbeat(deviceId, appVersion) {
@@ -484,8 +523,9 @@ async function searchDevices(query) {
     return all(`
         SELECT
             l.device_id,
-            l.status,
+            CASE WHEN l.status = 'APPROVED' AND l.is_lifetime = 0 AND l.expiration_at IS NOT NULL AND l.expiration_at <= ? THEN 'EXPIRED' ELSE l.status END AS status,
             l.expiration_at,
+            l.duration_seconds,
             l.is_lifetime,
             u.name as user_name,
             u.contact_number,
@@ -501,7 +541,7 @@ async function searchDevices(query) {
            OR u.contact_number LIKE ?
            OR u.telegram_username LIKE ?
         LIMIT 10
-    `, [q, q, q, q]);
+    `, [Date.now(), q, q, q, q]);
 }
 
 async function getDevicesByStatus(status, page = 1, limit = 10) {
@@ -510,8 +550,9 @@ async function getDevicesByStatus(status, page = 1, limit = 10) {
     let querySql = `
         SELECT
             l.device_id,
-            l.status,
+            CASE WHEN l.status = 'APPROVED' AND l.is_lifetime = 0 AND l.expiration_at IS NOT NULL AND l.expiration_at <= ? THEN 'EXPIRED' ELSE l.status END AS status,
             l.expiration_at,
+            l.duration_seconds,
             l.is_lifetime,
             u.name as user_name,
             u.contact_number,
@@ -522,17 +563,34 @@ async function getDevicesByStatus(status, page = 1, limit = 10) {
         LEFT JOIN devices d ON l.device_id = d.device_id
         LEFT JOIN users u ON l.user_id = u.id
     `;
-    const params = [];
+    const params = [Date.now()];
 
     if (status && status !== 'ALL') {
-        countSql += ` WHERE status = ?`;
-        querySql += ` WHERE l.status = ?`;
-        params.push(status);
+        if (status === 'EXPIRING') {
+            const now = Date.now();
+            const soon = now + (7 * 24 * 60 * 60 * 1000);
+            countSql += ` WHERE status = 'APPROVED' AND is_lifetime = 0 AND expiration_at BETWEEN ? AND ?`;
+            querySql += ` WHERE l.status = 'APPROVED' AND l.is_lifetime = 0 AND l.expiration_at BETWEEN ? AND ?`;
+            params.push(now, soon);
+        } else if (status === 'APPROVED') {
+            countSql += ` WHERE status = 'APPROVED' AND (is_lifetime = 1 OR expiration_at IS NULL OR expiration_at > ?)`;
+            querySql += ` WHERE l.status = 'APPROVED' AND (l.is_lifetime = 1 OR l.expiration_at IS NULL OR l.expiration_at > ?)`;
+            params.push(Date.now());
+        } else if (status === 'EXPIRED') {
+            countSql += ` WHERE status = 'EXPIRED' OR (status = 'APPROVED' AND is_lifetime = 0 AND expiration_at IS NOT NULL AND expiration_at <= ?)`;
+            querySql += ` WHERE l.status = 'EXPIRED' OR (l.status = 'APPROVED' AND l.is_lifetime = 0 AND l.expiration_at IS NOT NULL AND l.expiration_at <= ?)`;
+            params.push(Date.now());
+        } else {
+            countSql += ` WHERE status = ?`;
+            querySql += ` WHERE l.status = ?`;
+            params.push(status);
+        }
     }
 
     querySql += ` ORDER BY l.created_at DESC LIMIT ? OFFSET ?`;
 
-    const totalRes = await get(countSql, status && status !== 'ALL' ? [status] : []);
+    const countParams = status === 'EXPIRING' ? [Date.now(), Date.now() + (7 * 24 * 60 * 60 * 1000)] : status === 'APPROVED' ? [Date.now()] : status === 'EXPIRED' ? [Date.now()] : (status && status !== 'ALL' ? [status] : []);
+    const totalRes = await get(countSql, countParams);
     const total = totalRes ? (totalRes.count || totalRes['count']) : 0;
     const items = await all(querySql, [...params, limit, offset]);
 
@@ -546,18 +604,19 @@ async function getDevicesByStatus(status, page = 1, limit = 10) {
 }
 
 async function getStatistics() {
+    const now = Date.now();
     const stats = await get(`
         SELECT
             COUNT(*) as total_devices,
             COUNT(CASE WHEN status = 'PENDING' THEN 1 END) as pending_devices,
-            COUNT(CASE WHEN status = 'APPROVED' THEN 1 END) as approved_devices,
-            COUNT(CASE WHEN status = 'EXPIRED' THEN 1 END) as expired_devices,
+            COUNT(CASE WHEN status = 'APPROVED' AND (is_lifetime = 1 OR expiration_at IS NULL OR expiration_at > ?) THEN 1 END) as approved_devices,
+            COUNT(CASE WHEN status = 'EXPIRED' OR (status = 'APPROVED' AND is_lifetime = 0 AND expiration_at IS NOT NULL AND expiration_at <= ?) THEN 1 END) as expired_devices,
             COUNT(CASE WHEN status = 'BLOCKED' THEN 1 END) as blocked_devices,
             COUNT(CASE WHEN status = 'REJECTED' THEN 1 END) as rejected_devices
         FROM licenses
-    `);
+    `, [now, now]);
 
-    const now = Date.now();
+
     const sevenDaysLater = now + (7 * 24 * 60 * 60 * 1000);
     const expiringSoon = await get(`
         SELECT COUNT(*) as count FROM licenses
@@ -598,11 +657,14 @@ module.exports = {
     getLicense,
     registerApprovalRequest,
     approveDevice,
+    approveDeviceDuration,
     rejectDevice,
     blockDevice,
     unblockDevice,
+    unblockDeviceDuration,
     revokeDevice,
     extendLicense,
+    extendLicenseDuration,
     recordHeartbeat,
     searchDevices,
     getDevicesByStatus,

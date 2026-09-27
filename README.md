@@ -38,7 +38,7 @@
 - Your Telegram numeric User ID from [@userinfobot](https://t.me/userinfobot)
 
 ### Setup Steps
-1. Navigate to `/backend`:
+1. Navigate to `/server`:
    ```bash
    cd backend
    npm install
@@ -46,7 +46,7 @@
 2. Configure `.env`:
    ```bash
    cp .env.example .env
-   # Edit BOT_TOKEN and ADMIN_TELEGRAM_IDS
+   # Edit TELEGRAM_BOT_TOKEN, ADMIN_TELEGRAM_IDS, and ADMIN_API_KEY
    ```
 3. Start the Server:
    ```bash
@@ -80,3 +80,6 @@ Configured in the Android client & backend:
 2. **Local Cache Tamper Verification**: Cached license state is guarded with a SHA-256 HMAC checksum.
 3. **No Private Secrets in APK**: The APK contains zero Telegram tokens or database passwords.
 4. **Bounded 24-Hour Offline Grace**: Allows brief transient network drops while strictly prohibiting indefinite offline use.
+## 6. Telegram License Duration Controls
+The admin bot supports both the original day-based choices and the new minute/hour/custom choices. Approval and Unblock include 30m, 1h, 2h, 3h, 6h, 12h, 1d, 3d, 7d, 15d, 30d, 60d, 90d, 180d, 365d, Lifetime, and Custom Duration. Extension includes the same non-lifetime presets plus Custom Duration.
+

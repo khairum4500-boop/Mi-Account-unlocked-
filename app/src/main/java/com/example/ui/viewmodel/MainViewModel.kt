@@ -10,6 +10,7 @@ import com.example.data.model.DeviceRegistrationRequest
 import com.example.data.model.LicenseStatusResponse
 import com.example.data.repository.LicenseRepository
 import com.example.util.DeviceIdProvider
+import com.example.ui.localization.AppLocalization
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,7 +32,8 @@ data class MainUiState(
     val successMessage: String? = null,
     val isSubmittingApproval: Boolean = false,
     val serverBaseUrl: String = "",
-    val cooldownSeconds: Int = 0
+    val cooldownSeconds: Int = 0,
+    val remainingMillis: Long = 0L
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -46,6 +48,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var submitCooldownJob: Job? = null
     private var lastSubmitTime = 0L
     private var lastRefreshTime = 0L
+    private var countdownJob: Job? = null
 
     init {
         val deviceId = DeviceIdProvider.getDeviceId(application)
@@ -60,6 +63,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         refreshAll()
+    }
+
+
+    private fun startTimestampCountdown(license: LicenseStatusResponse?) {
+        countdownJob?.cancel()
+        if (license?.status != "APPROVED" || license.isLifetime == true || license.expirationTimestamp == null) {
+            _uiState.update { it.copy(remainingMillis = 0L) }
+            return
+        }
+        val expiration = license.expirationTimestamp
+        countdownJob = viewModelScope.launch {
+            while (true) {
+                val remaining = (expiration - repository.trustedNowMillis()).coerceAtLeast(0L)
+                _uiState.update { it.copy(remainingMillis = remaining) }
+                if (remaining <= 0L) break
+                delay(1000L)
+            }
+            refreshAll()
+        }
+    }
+
+    override fun onCleared() {
+        countdownJob?.cancel()
+        submitCooldownJob?.cancel()
+        super.onCleared()
     }
 
     fun refreshAll() {
@@ -100,6 +128,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         isRefreshing = false
                     )
                 }
+                startTimestampCountdown(licenseData)
 
                 // If approved, trigger periodic heartbeat
                 if (licenseData?.status == "APPROVED") {
@@ -112,9 +141,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         license = cached,
                         isLoading = false,
                         isRefreshing = false,
-                        errorMessage = licenseResult.exceptionOrNull()?.localizedMessage
+                        errorMessage = AppLocalization.text(AppLocalization.language.value, "Network connection failed")
                     )
                 }
+                startTimestampCountdown(cached)
             }
         }
     }
@@ -134,7 +164,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val deviceId = _uiState.value.deviceId
 
         if (name.isBlank() || contact.isBlank()) {
-            _uiState.update { it.copy(errorMessage = "Name and Contact Number are required.") }
+            _uiState.update { it.copy(errorMessage = AppLocalization.text(AppLocalization.language.value, "Name and Contact Number are required.")) }
             return
         }
 
@@ -168,14 +198,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(
                         isSubmittingApproval = false,
                         license = result.getOrNull(),
-                        successMessage = "Your approval request has been submitted. Please contact the administrator and wait for approval."
+                        successMessage = AppLocalization.text(AppLocalization.language.value, "Approval request submitted")
                     )
                 }
             } else {
                 _uiState.update {
                     it.copy(
                         isSubmittingApproval = false,
-                        errorMessage = result.exceptionOrNull()?.localizedMessage ?: "Failed to submit request"
+                        errorMessage = AppLocalization.text(AppLocalization.language.value, "Failed to submit request")
                     )
                 }
             }

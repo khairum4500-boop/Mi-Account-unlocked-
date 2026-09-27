@@ -21,6 +21,7 @@ class LicensePreferences(context: Context) {
         private const val KEY_ACTIVATION_TIME = "key_activation_time"
         private const val KEY_EXPIRATION_TIME = "key_expiration_time"
         private const val KEY_LAST_VERIFIED_TIME = "key_last_verified_time"
+        private const val KEY_SERVER_OFFSET = "key_server_offset"
         private const val KEY_REJECTION_REASON = "key_rejection_reason"
         private const val KEY_CHECKSUM = "key_checksum"
         private const val KEY_SUBMITTED_ONCE = "key_submitted_once"
@@ -57,7 +58,9 @@ class LicensePreferences(context: Context) {
             .putString(KEY_WHATSAPP_NUMBER, response.whatsappNumber)
             .putLong(KEY_ACTIVATION_TIME, response.activationTimestamp ?: 0L)
             .putLong(KEY_EXPIRATION_TIME, response.expirationTimestamp ?: 0L)
+            .putLong("key_duration_seconds", response.durationSeconds ?: 0L)
             .putLong(KEY_LAST_VERIFIED_TIME, now)
+            .putLong(KEY_SERVER_OFFSET, (response.serverTime ?: now) - now)
             .putString(KEY_REJECTION_REASON, response.rejectionReason)
             .putString(KEY_CHECKSUM, checksum)
             .apply()
@@ -75,9 +78,9 @@ class LicensePreferences(context: Context) {
         }
 
         val lastVerified = prefs.getLong(KEY_LAST_VERIFIED_TIME, 0L)
-        val now = System.currentTimeMillis()
+        val now = trustedNowMillis()
 
-        // If approved but local clock is past expiration, mark expired
+        // If approved but trusted current time is past expiration, mark expired
         val finalStatus = if (status == "APPROVED" && expirationTime in 1..now) {
             "EXPIRED"
         } else {
@@ -101,18 +104,23 @@ class LicensePreferences(context: Context) {
             lastSeenTimestamp = lastVerified.takeIf { it > 0 },
             rejectionReason = prefs.getString(KEY_REJECTION_REASON, null),
             daysRemaining = daysRemaining,
+            durationSeconds = prefs.getLong("key_duration_seconds", 0L).takeIf { it > 0 },
+            serverTime = trustedNowMillis(),
             isLifetime = expirationTime == 0L && status == "APPROVED"
         )
     }
 
     fun isOfflineGraceValid(expirationTime: Long): Boolean {
         val lastVerified = prefs.getLong(KEY_LAST_VERIFIED_TIME, 0L)
-        val now = System.currentTimeMillis()
+        val now = trustedNowMillis()
         val gracePeriodMs = 24 * 60 * 60 * 1000L // 24 hours offline grace
 
         // Must have been verified within the last 24 hours and not expired
         return (now - lastVerified < gracePeriodMs) && (expirationTime == 0L || now < expirationTime)
     }
+
+
+    fun trustedNowMillis(): Long = System.currentTimeMillis() + prefs.getLong(KEY_SERVER_OFFSET, 0L)
 
     fun clear() {
         prefs.edit().clear().apply()

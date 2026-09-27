@@ -56,6 +56,7 @@ import com.example.ui.theme.TechDarkBorder
 import com.example.ui.theme.TechDarkSurface
 import com.example.ui.theme.TechDarkSurfaceVariant
 import com.example.ui.viewmodel.MainUiState
+import com.example.ui.localization.tr
 import com.example.util.AdminContactHelper
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -107,7 +108,7 @@ fun LicenseAdminScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Security,
-                                contentDescription = "License",
+                                contentDescription = tr("License"),
                                 tint = StatusApproved,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -115,13 +116,13 @@ fun LicenseAdminScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
-                                text = "License Details",
+                                text = tr("License Details"),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
                             )
                             Text(
-                                text = "Authorized by Telegram Administrator",
+                                text = tr("Authorized by Telegram Administrator"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF9CA3AF)
                             )
@@ -136,26 +137,26 @@ fun LicenseAdminScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                LicenseItem("License ID", state.license?.licenseId ?: "LIC-GEN-${state.deviceId.takeLast(6)}")
-                LicenseItem("Device ID", state.deviceId, isCopyable = true) {
-                    AdminContactHelper.copyToClipboard(context, state.deviceId, "Device ID")
+                LicenseItem(tr("License ID"), state.license?.licenseId ?: "LIC-GEN-${state.deviceId.takeLast(6)}")
+                LicenseItem(tr("Device ID"), state.deviceId, isCopyable = true) {
+                    AdminContactHelper.copyToClipboard(context, state.deviceId, tr("Device ID"), tr("Copied"))
                 }
-                LicenseItem("Licensee Name", state.license?.userName ?: "Authorized User")
-                LicenseItem("Contact Phone", state.license?.contactNumber ?: "N/A")
+                LicenseItem(tr("Licensee Name"), state.license?.userName ?: tr("Authorized User"))
+                LicenseItem(tr("Contact Phone"), state.license?.contactNumber ?: tr("N/A"))
                 LicenseItem(
-                    "Activated On",
-                    state.license?.activationTimestamp?.let { dateFormat.format(Date(it)) } ?: "Active"
+                    tr("Activated On"),
+                    state.license?.activationTimestamp?.let { dateFormat.format(Date(it)) } ?: tr("Active")
                 )
                 LicenseItem(
-                    "Expiration Date",
-                    if (state.license?.isLifetime == true) "Lifetime Access"
+                    tr("Expiration Date"),
+                    if (state.license?.isLifetime == true) tr("Lifetime Access")
                     else state.license?.expirationTimestamp?.let { dateFormat.format(Date(it)) } ?: "Lifetime"
                 )
 
                 if (state.license?.notes != null) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Notes: ${state.license.notes}",
+                        text = tr("Notes: %s").format(state.license.notes),
                         fontSize = 11.sp,
                         color = TechCyan
                     )
@@ -174,7 +175,7 @@ fun LicenseAdminScreen(
                 ) {
                     Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Sync & Verify License")
+                    Text(tr("Sync & Verify License"))
                 }
             }
         }
@@ -203,13 +204,13 @@ fun LicenseAdminScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = Icons.Default.Dns,
-                        contentDescription = "Server",
+                        contentDescription = tr("Server"),
                         tint = TechCyan,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "License Server Configuration",
+                        text = tr("License Server Configuration"),
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
@@ -219,7 +220,7 @@ fun LicenseAdminScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = "Configured Server URL for license authorization & Telegram bot webhook:",
+                    text = tr("Configured Server URL for license authorization & Telegram bot webhook:"),
                     fontSize = 12.sp,
                     color = Color(0xFF9CA3AF)
                 )
@@ -232,7 +233,7 @@ fun LicenseAdminScreen(
                         serverUrlInput = it
                         isEditingServerUrl = true
                     },
-                    label = { Text("License Server Base URL") },
+                    label = { Text(tr("License Server Base URL")) },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -261,7 +262,7 @@ fun LicenseAdminScreen(
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = TechCyan)
                         ) {
-                            Text("Save & Connect", color = Color.Black, fontWeight = FontWeight.Bold)
+                            Text(tr("Save & Connect"), color = Color.Black, fontWeight = FontWeight.Bold)
                         }
 
                         OutlinedButton(
@@ -272,7 +273,7 @@ fun LicenseAdminScreen(
                             },
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("Reset")
+                            Text(tr("Reset"))
                         }
                     }
                 }
@@ -296,7 +297,7 @@ fun LicenseAdminScreen(
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
-                    text = "Security notice: MI Unlock uses server-authoritative license verification. Private bot tokens and credentials are never stored in this APK. Tampering with device clocks or local preferences is strictly detected.",
+                    text = tr("Security notice: MI Unlock uses server-authoritative license verification. Private bot tokens and credentials are never stored in this APK. Tampering with device clocks or local preferences is strictly detected."),
                     fontSize = 11.sp,
                     color = Color(0xFF9CA3AF),
                     lineHeight = 16.sp
@@ -334,7 +335,7 @@ private fun LicenseItem(
                 IconButton(onClick = onCopy, modifier = Modifier.size(24.dp)) {
                     Icon(
                         imageVector = Icons.Default.ContentCopy,
-                        contentDescription = "Copy",
+                        contentDescription = tr("Copy"),
                         tint = TechCyan,
                         modifier = Modifier.size(12.dp)
                     )

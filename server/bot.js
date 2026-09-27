@@ -72,7 +72,7 @@ async function isAdmin(ctx) {
 
 // Anti-Spam Rate Limiting: 3-Second Cooldown per user
 const userLastActionTime = new Map();
-const USER_COOLDOWN_MS = 3000;
+const USER_COOLDOWN_MS = 800;
 
 // Periodic cleanup of rate-limit map to prevent memory leaks
 setInterval(() => {
@@ -144,7 +144,7 @@ if (bot) {
                     const remainingSeconds = Math.ceil((USER_COOLDOWN_MS - elapsed) / 1000);
                     if (ctx.callbackQuery) {
                         try {
-                            await ctx.answerCbQuery(`⏳ অনুগ্রহ করে ${remainingSeconds} সেকেন্ড অপেক্ষা করুন... (3s Cooldown)`, { show_alert: false });
+                            await ctx.answerCbQuery(`⏳ অনুগ্রহ করে ${remainingSeconds} সেকেন্ড অপেক্ষা করুন... (800ms Cooldown)`, { show_alert: false });
                         } catch (_) {}
                     }
                     return; // Drop spam interaction safely without crashing
@@ -152,11 +152,12 @@ if (bot) {
                 userLastActionTime.set(userId, now);
             }
 
-            if (ctx.chat?.id) {
-                await registerAdminChatId(ctx.chat.id);
-            }
             if (!(await isAdmin(ctx))) {
                 return ctx.reply('⛔ <b>Unauthorized:</b> You do not have permission to access the MI Unlock Admin Panel.', { parse_mode: 'HTML' });
+            }
+            // Only an already-authorized administrator may be auto-registered for future alerts.
+            if (ctx.chat?.id) {
+                await registerAdminChatId(ctx.chat.id);
             }
             return next();
         } catch (err) {
@@ -167,6 +168,69 @@ if (bot) {
 }
 
 // Formatters
+const pendingDurationInputs = new Map();
+const MAX_CUSTOM_DURATION_SECONDS = 10 * 365 * 24 * 60 * 60;
+const MIN_CUSTOM_DURATION_SECONDS = 60;
+
+function parseDurationInput(input) {
+    if (input === null || input === undefined) return null;
+    let raw = String(input).trim().toLowerCase();
+    if (!raw) return null;
+    if (/^(lifetime|life|forever|infinity|∞)$/.test(raw)) {
+        return { seconds: 0, lifetime: true };
+    }
+
+    raw = raw
+        .replace(/minutes?|mins?/g, 'm')
+        .replace(/hours?|hrs?/g, 'h')
+        .replace(/days?/g, 'd')
+        .replace(/seconds?|secs?/g, 's')
+        .replace(/\s+/g, '');
+
+    const matches = [...raw.matchAll(/(\d+)([dhms])/g)];
+    if (!matches.length || matches.map(m => m[0]).join('') !== raw) return null;
+
+    const unitSeconds = { d: 86400, h: 3600, m: 60, s: 1 };
+    let total = 0;
+    for (const match of matches) {
+        total += Number(match[1]) * unitSeconds[match[2]];
+        if (!Number.isSafeInteger(total) || total > MAX_CUSTOM_DURATION_SECONDS) return null;
+    }
+    if (total < MIN_CUSTOM_DURATION_SECONDS) return null;
+    return { seconds: total, lifetime: false };
+}
+
+function formatDuration(seconds, lifetime = false) {
+    if (lifetime) return '♾️ Lifetime';
+    let remaining = Math.max(0, Math.floor(Number(seconds) || 0));
+    const days = Math.floor(remaining / 86400); remaining %= 86400;
+    const hours = Math.floor(remaining / 3600); remaining %= 3600;
+    const minutes = Math.floor(remaining / 60); const secs = remaining % 60;
+    const parts = [];
+    if (days) parts.push(`${days}d`);
+    if (hours) parts.push(`${hours}h`);
+    if (minutes) parts.push(`${minutes}m`);
+    if (secs || parts.length === 0) parts.push(`${secs}s`);
+    return parts.join(' ');
+}
+
+function requestCustomDuration(ctx, deviceId, mode) {
+    const userId = String(ctx.from?.id || '');
+    if (!userId) return ctx.reply('Unable to identify administrator.');
+    pendingDurationInputs.set(userId, { deviceId, mode, createdAt: Date.now() });
+    return ctx.reply(
+        `✏️ <b>Custom Duration</b>\n\nSend a duration such as <code>45m</code>, <code>2h</code>, <code>2h30m</code>, <code>3d</code>, or <code>2d 4h</code>.\nMinimum: 1 minute. Maximum: 10 years.\nSend <code>cancel</code> to cancel.`,
+        { parse_mode: 'HTML' }
+    );
+}
+
+setInterval(() => {
+    const cutoff = Date.now() - (10 * 60 * 1000);
+    for (const [userId, pending] of pendingDurationInputs.entries()) {
+        if (pending.createdAt < cutoff) pendingDurationInputs.delete(userId);
+    }
+}, 60 * 1000);
+
 function formatTimestamp(ts) {
     if (!ts) return 'N/A';
     return new Date(ts).toLocaleString('en-US', { timeZone: 'UTC', dateStyle: 'medium', timeStyle: 'short' });
@@ -199,6 +263,7 @@ function formatDeviceCard(d) {
            `✈️ <b>Telegram:</b> ${tg}\n` +
            `💬 <b>WhatsApp:</b> <code>${wa}</code>\n` +
            `📊 <b>Status:</b> <b>${statusEmoji}</b>\n` +
+           `⏱️ <b>Duration:</b> ${escapeHtml(formatDuration(d.duration_seconds || d.durationSeconds || ((d.duration_days || 0) * 86400), d.is_lifetime))}\n` +
            `⏰ <b>Expires:</b> ${expText}\n` +
            `👁️ <b>Last Seen:</b> ${lastSeen}\n` +
            `📱 <b>Model:</b> ${model}`;
@@ -245,26 +310,48 @@ function getDeviceActionKeyboard(deviceId, currentStatus) {
     return Markup.inlineKeyboard(rows);
 }
 
-// Duration Selection Keyboard (1d, 3d, 7d, 15d, 30d, 60d, 90d, 180d, 365d, Lifetime)
+// Duration selection uses exact seconds so hours/minutes are first-class.
 function getDurationKeyboard(deviceId) {
     return Markup.inlineKeyboard([
-        [Markup.button.callback('1 Day', `apv_${deviceId}_1`), Markup.button.callback('3 Days', `apv_${deviceId}_3`)],
-        [Markup.button.callback('7 Days', `apv_${deviceId}_7`), Markup.button.callback('15 Days', `apv_${deviceId}_15`)],
-        [Markup.button.callback('30 Days', `apv_${deviceId}_30`), Markup.button.callback('60 Days', `apv_${deviceId}_60`)],
-        [Markup.button.callback('90 Days', `apv_${deviceId}_90`), Markup.button.callback('180 Days', `apv_${deviceId}_180`)],
-        [Markup.button.callback('365 Days (1 Yr)', `apv_${deviceId}_365`), Markup.button.callback('♾️ Lifetime', `apv_${deviceId}_lifetime`)],
+        [Markup.button.callback('30 Min', `apv_${deviceId}_1800`), Markup.button.callback('1 Hour', `apv_${deviceId}_3600`)],
+        [Markup.button.callback('2 Hours', `apv_${deviceId}_7200`), Markup.button.callback('3 Hours', `apv_${deviceId}_10800`)],
+        [Markup.button.callback('6 Hours', `apv_${deviceId}_21600`), Markup.button.callback('12 Hours', `apv_${deviceId}_43200`)],
+        [Markup.button.callback('1 Day', `apv_${deviceId}_86400`), Markup.button.callback('3 Days', `apv_${deviceId}_259200`)],
+        [Markup.button.callback('7 Days', `apv_${deviceId}_604800`), Markup.button.callback('15 Days', `apv_${deviceId}_1296000`)],
+        [Markup.button.callback('30 Days', `apv_${deviceId}_2592000`), Markup.button.callback('60 Days', `apv_${deviceId}_5184000`)],
+        [Markup.button.callback('90 Days', `apv_${deviceId}_7776000`), Markup.button.callback('180 Days', `apv_${deviceId}_15552000`)],
+        [Markup.button.callback('365 Days', `apv_${deviceId}_31536000`), Markup.button.callback('♾️ Lifetime', `apv_${deviceId}_lifetime`)],
+        [Markup.button.callback('✏️ Custom Duration', `customapv_${deviceId}`)],
         [Markup.button.callback('🔙 Cancel', `view_${deviceId}`)]
     ]);
 }
 
-// Extension Keyboard (1d, 3d, 7d, 15d, 30d, 60d, 90d, 180d, 365d)
 function getExtensionKeyboard(deviceId) {
     return Markup.inlineKeyboard([
-        [Markup.button.callback('+1 Day', `doext_${deviceId}_1`), Markup.button.callback('+3 Days', `doext_${deviceId}_3`)],
-        [Markup.button.callback('+7 Days', `doext_${deviceId}_7`), Markup.button.callback('+15 Days', `doext_${deviceId}_15`)],
-        [Markup.button.callback('+30 Days', `doext_${deviceId}_30`), Markup.button.callback('+60 Days', `doext_${deviceId}_60`)],
-        [Markup.button.callback('+90 Days', `doext_${deviceId}_90`), Markup.button.callback('+180 Days', `doext_${deviceId}_180`)],
-        [Markup.button.callback('+365 Days (1 Yr)', `doext_${deviceId}_365`)],
+        [Markup.button.callback('+30 Min', `doext_${deviceId}_1800`), Markup.button.callback('+1 Hour', `doext_${deviceId}_3600`)],
+        [Markup.button.callback('+2 Hours', `doext_${deviceId}_7200`), Markup.button.callback('+3 Hours', `doext_${deviceId}_10800`)],
+        [Markup.button.callback('+6 Hours', `doext_${deviceId}_21600`), Markup.button.callback('+12 Hours', `doext_${deviceId}_43200`)],
+        [Markup.button.callback('+1 Day', `doext_${deviceId}_86400`), Markup.button.callback('+3 Days', `doext_${deviceId}_259200`)],
+        [Markup.button.callback('+7 Days', `doext_${deviceId}_604800`), Markup.button.callback('+15 Days', `doext_${deviceId}_1296000`)],
+        [Markup.button.callback('+30 Days', `doext_${deviceId}_2592000`), Markup.button.callback('+60 Days', `doext_${deviceId}_5184000`)],
+        [Markup.button.callback('+90 Days', `doext_${deviceId}_7776000`), Markup.button.callback('+180 Days', `doext_${deviceId}_15552000`)],
+        [Markup.button.callback('+365 Days', `doext_${deviceId}_31536000`)],
+        [Markup.button.callback('✏️ Custom Duration', `customext_${deviceId}`)],
+        [Markup.button.callback('🔙 Cancel', `view_${deviceId}`)]
+    ]);
+}
+
+function getUnblockKeyboard(deviceId) {
+    return Markup.inlineKeyboard([
+        [Markup.button.callback('30 Min', `dounblk_${deviceId}_1800`), Markup.button.callback('1 Hour', `dounblk_${deviceId}_3600`)],
+        [Markup.button.callback('2 Hours', `dounblk_${deviceId}_7200`), Markup.button.callback('3 Hours', `dounblk_${deviceId}_10800`)],
+        [Markup.button.callback('6 Hours', `dounblk_${deviceId}_21600`), Markup.button.callback('12 Hours', `dounblk_${deviceId}_43200`)],
+        [Markup.button.callback('1 Day', `dounblk_${deviceId}_86400`), Markup.button.callback('3 Days', `dounblk_${deviceId}_259200`)],
+        [Markup.button.callback('7 Days', `dounblk_${deviceId}_604800`), Markup.button.callback('15 Days', `dounblk_${deviceId}_1296000`)],
+        [Markup.button.callback('30 Days', `dounblk_${deviceId}_2592000`), Markup.button.callback('60 Days', `dounblk_${deviceId}_5184000`)],
+        [Markup.button.callback('90 Days', `dounblk_${deviceId}_7776000`), Markup.button.callback('180 Days', `dounblk_${deviceId}_15552000`)],
+        [Markup.button.callback('365 Days', `dounblk_${deviceId}_31536000`), Markup.button.callback('♾️ Lifetime', `dounblk_${deviceId}_lifetime`)],
+        [Markup.button.callback('✏️ Custom Duration', `customunblk_${deviceId}`)],
         [Markup.button.callback('🔙 Cancel', `view_${deviceId}`)]
     ]);
 }
@@ -460,10 +547,10 @@ if (bot) {
             await ctx.answerCbQuery('Processing approval...');
             const durStr = ctx.match[2];
             const isLifetime = durStr === 'lifetime';
-            const days = isLifetime ? 0 : parseInt(durStr, 10);
+            const durationSeconds = isLifetime ? 0 : parseInt(durStr, 10);
             const adminId = String(ctx.from?.username || ctx.from?.id || 'Admin');
 
-            const updated = await db.approveDevice(deviceId, days, isLifetime, adminId);
+            const updated = await db.approveDeviceDuration(deviceId, durationSeconds, isLifetime, adminId);
             return ctx.editMessageText(`✅ <b>DEVICE APPROVED SUCCESSFULLY!</b>\n\n${formatDeviceCard(updated)}`, {
                 parse_mode: 'HTML',
                 ...getDeviceActionKeyboard(deviceId, updated.status)
@@ -517,23 +604,19 @@ if (bot) {
         }
     });
 
-    // Custom Approve Command: /approve <deviceId> <days|lifetime>
+    // Custom Approve Command: /approve <deviceId> <duration>, e.g. 2h30m
     bot.command('approve', async (ctx) => {
         try {
-            const parts = ctx.message.text.split(' ').filter(Boolean);
+            const parts = ctx.message.text.trim().split(/\s+/);
             if (parts.length < 3) {
-                return ctx.reply('Usage: <code>/approve &lt;device_id&gt; &lt;days_or_lifetime&gt;</code>\nExample: <code>/approve MI-XXXXXXXXXX 30</code> or <code>/approve MI-XXXXXXXXXX lifetime</code>', { parse_mode: 'HTML' });
+                return ctx.reply('Usage: <code>/approve &lt;device_id&gt; &lt;duration&gt;</code>\nExample: <code>/approve MI-XXXXXXXX 2h30m</code> or <code>/approve MI-XXXXXXXX lifetime</code>', { parse_mode: 'HTML' });
             }
             const deviceId = parts[1].trim();
-            const durStr = parts[2].toLowerCase().trim();
-            const isLifetime = durStr === 'lifetime';
-            const days = isLifetime ? 0 : parseInt(durStr, 10);
-            if (!isLifetime && isNaN(days)) {
-                return ctx.reply('Invalid duration. Use a number of days (e.g. 30) or <code>lifetime</code>.', { parse_mode: 'HTML' });
-            }
+            const parsed = parseDurationInput(parts.slice(2).join(' '));
+            if (!parsed) return ctx.reply('Invalid duration. Examples: <code>1h</code>, <code>2h30m</code>, <code>90m</code>, <code>2d</code>, <code>lifetime</code>.', { parse_mode: 'HTML' });
             const adminId = String(ctx.from?.username || ctx.from?.id || 'Admin');
-            const updated = await db.approveDevice(deviceId, days, isLifetime, adminId);
-            return ctx.replyWithHTML(`✅ <b>DEVICE APPROVED (CUSTOM)</b>\n\n${formatDeviceCard(updated)}`, getDeviceActionKeyboard(deviceId, updated.status));
+            const updated = await db.approveDeviceDuration(deviceId, parsed.seconds, parsed.lifetime, adminId);
+            return ctx.replyWithHTML(`✅ <b>DEVICE APPROVED</b>\nDuration: <b>${escapeHtml(formatDuration(parsed.seconds, parsed.lifetime))}</b>\n\n${formatDeviceCard(updated)}`, getDeviceActionKeyboard(deviceId, updated.status));
         } catch (e) {
             console.error('[BOT cmd approve error]:', e);
             return ctx.reply(`Error: ${escapeHtml(e.message)}`);
@@ -556,20 +639,51 @@ if (bot) {
         }
     });
 
-    // Unblock action
+    // Unblock opens a duration picker instead of silently granting a fixed 30 days.
     bot.action(/unblk_(.+)/, async (ctx) => {
         try {
-            await ctx.answerCbQuery('Device unblocked');
+            await ctx.answerCbQuery();
             const deviceId = ctx.match[1];
-            const adminId = String(ctx.from?.username || ctx.from?.id || 'Admin');
-            const updated = await db.unblockDevice(deviceId, 'APPROVED', 30, adminId);
-            return ctx.editMessageText(`🔓 <b>DEVICE UNBLOCKED (30 Days License)</b>\n\n${formatDeviceCard(updated)}`, {
-                parse_mode: 'HTML',
-                ...getDeviceActionKeyboard(deviceId, updated.status)
+            return ctx.editMessageText(`🔓 <b>Unblock Device</b>\n\nSelect how long access should be restored for <code>${escapeHtml(deviceId)}</code>:`, {
+                parse_mode: 'HTML', ...getUnblockKeyboard(deviceId)
             });
-        } catch (e) {
-            console.error('[BOT unblock error]:', e);
-        }
+        } catch (e) { console.error('[BOT unblock picker error]:', e); }
+    });
+
+    bot.action(/dounblk_(.+)_lifetime/, async (ctx) => {
+        const deviceId = ctx.match[1];
+        try {
+            await ctx.answerCbQuery('Unblocking for lifetime...');
+            const adminId = String(ctx.from?.username || ctx.from?.id || 'Admin');
+            const updated = await db.approveDeviceDuration(deviceId, 0, true, adminId);
+            return ctx.editMessageText(`🔓 <b>DEVICE UNBLOCKED</b>\nDuration: <b>♾️ Lifetime</b>\n\n${formatDeviceCard(updated)}`, { parse_mode: 'HTML', ...getDeviceActionKeyboard(deviceId, updated.status) });
+        } catch (e) { console.error('[BOT unblock lifetime error]:', e); try { await ctx.reply(`❌ ${escapeHtml(e.message)}`, {parse_mode:'HTML'}); } catch (_) {} }
+    });
+
+    bot.action(/dounblk_(.+)_(\d+)/, async (ctx) => {
+        const deviceId = ctx.match[1];
+        try {
+            await ctx.answerCbQuery('Unblocking...');
+            const seconds = parseInt(ctx.match[2], 10);
+            const adminId = String(ctx.from?.username || ctx.from?.id || 'Admin');
+            const updated = await db.unblockDeviceDuration(deviceId, seconds, adminId);
+            return ctx.editMessageText(`🔓 <b>DEVICE UNBLOCKED</b>\nDuration: <b>${formatDuration(seconds)}</b>\n\n${formatDeviceCard(updated)}`, { parse_mode: 'HTML', ...getDeviceActionKeyboard(deviceId, updated.status) });
+        } catch (e) { console.error('[BOT unblock error]:', e); try { await ctx.reply(`❌ ${escapeHtml(e.message)}`, {parse_mode:'HTML'}); } catch (_) {} }
+    });
+
+    bot.action(/customunblk_(.+)/, async (ctx) => {
+        try { await ctx.answerCbQuery(); return requestCustomDuration(ctx, ctx.match[1], 'unblock'); }
+        catch (e) { console.error('[BOT custom unblock prompt error]:', e); }
+    });
+
+    bot.action(/customapv_(.+)/, async (ctx) => {
+        try { await ctx.answerCbQuery(); return requestCustomDuration(ctx, ctx.match[1], 'approve'); }
+        catch (e) { console.error('[BOT custom approve prompt error]:', e); }
+    });
+
+    bot.action(/customext_(.+)/, async (ctx) => {
+        try { await ctx.answerCbQuery(); return requestCustomDuration(ctx, ctx.match[1], 'extend'); }
+        catch (e) { console.error('[BOT custom extend prompt error]:', e); }
     });
 
     // Extension options
@@ -591,10 +705,10 @@ if (bot) {
         try {
             await ctx.answerCbQuery('License extended');
             const deviceId = ctx.match[1];
-            const days = parseInt(ctx.match[2], 10);
+            const seconds = parseInt(ctx.match[2], 10);
             const adminId = String(ctx.from?.username || ctx.from?.id || 'Admin');
-            const updated = await db.extendLicense(deviceId, days, adminId);
-            return ctx.editMessageText(`🎉 <b>LICENSE EXTENDED BY +${days} DAYS!</b>\n\n${formatDeviceCard(updated)}`, {
+            const updated = await db.extendLicenseDuration(deviceId, seconds, adminId);
+            return ctx.editMessageText(`🎉 <b>LICENSE EXTENDED BY +${formatDuration(seconds)}!</b>\n\n${formatDeviceCard(updated)}`,  {
                 parse_mode: 'HTML',
                 ...getDeviceActionKeyboard(deviceId, updated.status)
             });
@@ -602,6 +716,38 @@ if (bot) {
             console.error('[BOT doext error]:', e);
         }
     });
+
+    // Resolve custom duration entered by the admin after a custom-duration prompt.
+    bot.on('text', async (ctx) => {
+        const key = String(ctx.from?.id || '');
+        const pending = pendingDurationInputs.get(key);
+        if (!pending) return;
+        pendingDurationInputs.delete(key);
+        if (Date.now() - pending.createdAt > 10 * 60 * 1000) {
+            return ctx.reply('⌛ Custom duration request expired. Please open the duration menu again.');
+        }
+        if (String(ctx.message.text || '').trim().toLowerCase() === 'cancel') {
+            return ctx.reply('❎ Cancelled.');
+        }
+        const parsed = parseDurationInput(ctx.message.text);
+        if (!parsed || parsed.lifetime) {
+            return ctx.reply('❌ Invalid duration. Try <code>1h</code>, <code>2h30m</code>, <code>90m</code>, or <code>2d</code>.', {parse_mode:'HTML'});
+        }
+        const deviceId = pending.deviceId;
+        const adminId = String(ctx.from?.username || ctx.from?.id || 'Admin');
+        try {
+            let updated;
+            if (pending.mode === 'approve') updated = await db.approveDeviceDuration(deviceId, parsed.seconds, false, adminId);
+            else if (pending.mode === 'extend') updated = await db.extendLicenseDuration(deviceId, parsed.seconds, adminId);
+            else updated = await db.unblockDeviceDuration(deviceId, parsed.seconds, adminId);
+            const verb = pending.mode === 'approve' ? 'APPROVED' : pending.mode === 'extend' ? 'EXTENDED' : 'UNBLOCKED';
+            return ctx.replyWithHTML(`✅ <b>${verb}</b>\nDuration: <b>${formatDuration(parsed.seconds)}</b>\n\n${formatDeviceCard(updated)}`, getDeviceActionKeyboard(deviceId, updated.status));
+        } catch (e) {
+            console.error('[BOT custom duration error]:', e);
+            return ctx.reply(`❌ ${escapeHtml(e.message)}`, {parse_mode:'HTML'});
+        }
+    });
+
 }
 
 // Function to broadcast new approval request to all configured admins

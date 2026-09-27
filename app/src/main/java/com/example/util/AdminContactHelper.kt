@@ -27,7 +27,7 @@ object AdminContactHelper {
         }
     }
 
-    fun openWhatsApp(context: Context, number: String = DEFAULT_WHATSAPP, message: String = "Hello Admin, I am contacting you regarding MI Unlock license.") {
+    fun openWhatsApp(context: Context, number: String = DEFAULT_WHATSAPP, message: String = "Hello Admin, I am contacting you regarding MI Unlock license.", errorPrefix: String = "Cannot open WhatsApp") {
         try {
             var formatted = number.trim().replace(" ", "").replace("-", "")
             if (formatted.startsWith("0")) {
@@ -42,40 +42,40 @@ object AdminContactHelper {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
         } catch (e: Exception) {
-            Toast.makeText(context, "Cannot open WhatsApp: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "$errorPrefix: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
         }
     }
 
-    fun callAdmin(context: Context, number: String = DEFAULT_CONTACT) {
+    fun callAdmin(context: Context, number: String = DEFAULT_CONTACT, errorPrefix: String = "Cannot launch dialer") {
         try {
             val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number"))
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
         } catch (e: Exception) {
-            Toast.makeText(context, "Cannot launch dialer: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "$errorPrefix: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
         }
     }
 
-    fun sendEmail(context: Context, email: String = DEFAULT_EMAIL, subject: String = "MI Unlock License Request", deviceId: String = "") {
+    fun sendEmail(context: Context, email: String = DEFAULT_EMAIL, subject: String = "MI Unlock License Request", deviceId: String = "", body: String? = null, errorPrefix: String = "Cannot open email client") {
         try {
-            val body = "Hello Admin,\n\nI need assistance with my MI Unlock license.\nDevice ID: $deviceId\n"
+            val emailBody = body ?: "Hello Admin,\n\nI need assistance with my MI Unlock license.\nDevice ID: $deviceId\n"
             val intent = Intent(Intent.ACTION_SENDTO).apply {
                 data = Uri.parse("mailto:")
                 putExtra(Intent.EXTRA_EMAIL, arrayOf(email))
                 putExtra(Intent.EXTRA_SUBJECT, subject)
-                putExtra(Intent.EXTRA_TEXT, body)
+                putExtra(Intent.EXTRA_TEXT, emailBody)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
         } catch (e: Exception) {
-            Toast.makeText(context, "Cannot open email client: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "$errorPrefix: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
         }
     }
 
-    fun copyToClipboard(context: Context, text: String, label: String = "Copied") {
+    fun copyToClipboard(context: Context, text: String, label: String = "Copied", confirmation: String = "Copied") {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val clip = ClipData.newPlainText(label, text)
         clipboard.setPrimaryClip(clip)
-        Toast.makeText(context, "$label copied to clipboard", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, confirmation, Toast.LENGTH_SHORT).show()
     }
 }

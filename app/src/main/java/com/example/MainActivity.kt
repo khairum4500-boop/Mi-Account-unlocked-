@@ -1,5 +1,7 @@
 package com.example
 
+import com.example.ui.localization.tr
+
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -45,6 +47,13 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.CompositionLocalProvider
+import com.example.ui.components.LanguageSelector
+import com.example.ui.localization.AppLocalization
+import com.example.ui.localization.LocalAppLanguage
+import com.example.ui.localization.tr
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.components.AdminContactCard
@@ -67,9 +76,15 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         handleIntent(intent)
+        AppLocalization.initialize(this)
 
         setContent {
-            MyApplicationTheme {
+            val language by AppLocalization.language.collectAsState()
+            CompositionLocalProvider(
+                LocalAppLanguage provides language,
+                androidx.compose.ui.platform.LocalLayoutDirection provides if (language.rtl) LayoutDirection.Rtl else LayoutDirection.Ltr
+            ) {
+                MyApplicationTheme {
                 val currentLoginData by loginDataState
                 MiUnlockApp(
                     initialLoginData = currentLoginData,
@@ -79,6 +94,7 @@ class MainActivity : ComponentActivity() {
                         openLoginActivity(false)
                     }
                 )
+                }
             }
         }
     }
@@ -130,7 +146,10 @@ fun MiUnlockApp(
         }
     }
 
+    // Authorization is timestamp-based: a visual countdown is not the source of truth.
+    // The ViewModel derives remainingMillis from expirationTimestamp - trustedCurrentTime.
     val isApproved = uiState.license?.status == "APPROVED" &&
+            (uiState.license?.isLifetime == true || uiState.remainingMillis > 0L) &&
             !uiState.isMaintenance &&
             !uiState.isUpdateRequired
 
@@ -141,13 +160,13 @@ fun MiUnlockApp(
             icon = {
                 Icon(
                     imageVector = Icons.Default.Announcement,
-                    contentDescription = "Announcement",
+                    contentDescription = tr("Announcement"),
                     tint = TechCyan
                 )
             },
             title = {
                 Text(
-                    text = "Administrator Announcement",
+                    text = tr("Administrator Announcement"),
                     fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
@@ -160,7 +179,7 @@ fun MiUnlockApp(
             },
             confirmButton = {
                 TextButton(onClick = { viewModel.dismissAnnouncement() }) {
-                    Text("OK", color = TechCyan)
+                    Text(tr("OK"), color = TechCyan)
                 }
             },
             containerColor = TechDarkSurface,
@@ -178,7 +197,7 @@ fun MiUnlockApp(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Contact Administrator",
+                        text = tr("Contact Administrator"),
                         fontWeight = FontWeight.Bold,
                         color = Color.White,
                         modifier = Modifier.weight(1f)
@@ -189,7 +208,7 @@ fun MiUnlockApp(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
+                            contentDescription = tr("Close"),
                             tint = Color(0xFF9CA3AF)
                         )
                     }
@@ -231,7 +250,7 @@ fun MiUnlockApp(
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "MI Unlock Tool",
+                            text = tr("MI Unlock Tool"),
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
@@ -239,13 +258,14 @@ fun MiUnlockApp(
                     }
                 },
                 actions = {
+                    LanguageSelector()
                     IconButton(
                         onClick = { showAdminContactDialog = true },
                         modifier = Modifier.testTag("topbar_btn_contact")
                     ) {
                         Icon(
                             imageVector = Icons.Default.ContactSupport,
-                            contentDescription = "Admin Contact",
+                            contentDescription = tr("Admin Contact"),
                             tint = TechCyan
                         )
                     }
@@ -255,7 +275,7 @@ fun MiUnlockApp(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
-                            contentDescription = "Refresh",
+                            contentDescription = tr("Refresh"),
                             tint = Color.White
                         )
                     }

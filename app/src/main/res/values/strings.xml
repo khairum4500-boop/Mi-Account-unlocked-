@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">MI Unlock</string>
+    <string name="login_activity_title">Mi Account Login</string>
 </resources>

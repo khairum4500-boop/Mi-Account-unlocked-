@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS licenses (
     user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     status TEXT NOT NULL DEFAULT 'PENDING',
     duration_days INTEGER,
+    duration_seconds BIGINT,
     is_lifetime INTEGER DEFAULT 0,
     created_at BIGINT NOT NULL,
     approved_at BIGINT,

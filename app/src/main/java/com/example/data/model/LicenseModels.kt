@@ -43,6 +43,7 @@ data class LicenseStatusResponse(
     @Json(name = "notes") val notes: String? = null,
     @Json(name = "rejectionReason") val rejectionReason: String? = null,
     @Json(name = "daysRemaining") val daysRemaining: Long? = null,
+    @Json(name = "durationSeconds") val durationSeconds: Long? = null,
     @Json(name = "isLifetime") val isLifetime: Boolean? = false
 )
 

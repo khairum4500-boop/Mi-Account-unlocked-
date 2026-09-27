@@ -62,6 +62,7 @@ import com.example.ui.theme.TechDarkBorder
 import com.example.ui.theme.TechDarkSurface
 import com.example.ui.theme.TechDarkSurfaceVariant
 import com.example.ui.viewmodel.MainUiState
+import com.example.ui.localization.tr
 import com.example.util.AdminContactHelper
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -104,7 +105,7 @@ fun AuthorizationScreen(
         ) {
             Icon(
                 imageVector = Icons.Default.Lock,
-                contentDescription = "MI Unlock Security",
+                contentDescription = tr("MI Unlock Security"),
                 tint = MiOrange,
                 modifier = Modifier.size(36.dp)
             )
@@ -113,14 +114,14 @@ fun AuthorizationScreen(
         Spacer(modifier = Modifier.height(14.dp))
 
         Text(
-            text = "MI Unlock",
+            text = tr("MI Unlock"),
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
             color = Color.White
         )
 
         Text(
-            text = "Xiaomi & HyperOS Bootloader Utility",
+            text = tr("Xiaomi & HyperOS Bootloader Utility"),
             fontSize = 13.sp,
             color = Color(0xFF9CA3AF)
         )
@@ -144,7 +145,7 @@ fun AuthorizationScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Device ID",
+                        text = tr("Device ID"),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF9CA3AF)
@@ -159,12 +160,12 @@ fun AuthorizationScreen(
                 }
 
                 IconButton(
-                    onClick = { AdminContactHelper.copyToClipboard(context, state.deviceId, "Device ID") },
+                    onClick = { AdminContactHelper.copyToClipboard(context, state.deviceId, tr("Device ID"), tr("Copied")) },
                     modifier = Modifier.size(36.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.ContentCopy,
-                        contentDescription = "Copy Device ID",
+                        contentDescription = tr("Copy Device ID"),
                         tint = TechCyan,
                         modifier = Modifier.size(18.dp)
                     )
@@ -181,6 +182,9 @@ fun AuthorizationScreen(
             }
             state.isUpdateRequired -> {
                 UpdateRequiredCard(minVersion = state.appConfig.minVersion)
+            }
+            status == "APPROVED" && state.license?.isLifetime != true && (state.license?.expirationTimestamp == null || state.license.expirationTimestamp <= 0L) -> {
+                InvalidLicenseCard(onRefresh = onRefresh)
             }
             status == "PENDING" && !isEditingForm -> {
                 PendingStatusCard(
@@ -272,7 +276,7 @@ private fun ApprovalRequestForm(
             modifier = Modifier.padding(18.dp)
         ) {
             Text(
-                text = "Authorization Required",
+                text = tr("Authorization Required"),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = Color.White
@@ -281,7 +285,7 @@ private fun ApprovalRequestForm(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = "Admin approval is required before you can use this application. Please submit your details below.",
+                text = tr("Admin approval is required before you can use this application. Please submit your details below."),
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF9CA3AF)
             )
@@ -291,7 +295,7 @@ private fun ApprovalRequestForm(
             OutlinedTextField(
                 value = name,
                 onValueChange = onNameChange,
-                label = { Text("Full Name *") },
+                label = { Text(tr("Full Name *")) },
                 singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -305,8 +309,8 @@ private fun ApprovalRequestForm(
             OutlinedTextField(
                 value = contact,
                 onValueChange = onContactChange,
-                label = { Text("Contact Number *") },
-                placeholder = { Text("e.g. 017XXXXXXXX") },
+                label = { Text(tr("Contact Number *")) },
+                placeholder = { Text(tr("e.g. 017XXXXXXXX")) },
                 singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -320,8 +324,8 @@ private fun ApprovalRequestForm(
             OutlinedTextField(
                 value = telegram,
                 onValueChange = onTelegramChange,
-                label = { Text("Telegram Username") },
-                placeholder = { Text("e.g. @your_telegram") },
+                label = { Text(tr("Telegram Username")) },
+                placeholder = { Text(tr("e.g. @your_telegram")) },
                 singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -335,8 +339,8 @@ private fun ApprovalRequestForm(
             OutlinedTextField(
                 value = whatsapp,
                 onValueChange = onWhatsappChange,
-                label = { Text("WhatsApp Number") },
-                placeholder = { Text("e.g. 01XXXXXXXXX") },
+                label = { Text(tr("WhatsApp Number")) },
+                placeholder = { Text(tr("e.g. 01XXXXXXXXX")) },
                 singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -351,7 +355,7 @@ private fun ApprovalRequestForm(
                 value = deviceId,
                 onValueChange = {},
                 readOnly = true,
-                label = { Text("Device ID (read-only)") },
+                label = { Text(tr("Device ID (read-only)")) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("input_device_id_readonly"),
@@ -381,16 +385,16 @@ private fun ApprovalRequestForm(
                         strokeWidth = 2.dp
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Submitting...")
+                    Text(tr("Submitting..."))
                 } else if (cooldownSeconds > 0) {
                     Text(
-                        text = "PLEASE WAIT (${cooldownSeconds}s)...",
+                        text = tr("PLEASE WAIT (%ss)...").format(cooldownSeconds),
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.5.sp
                     )
                 } else {
                     Text(
-                        text = "REQUEST APPROVAL",
+                        text = tr("REQUEST APPROVAL"),
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.5.sp
                     )
@@ -426,7 +430,7 @@ private fun PendingStatusCard(
             ) {
                 Icon(
                     imageVector = Icons.Default.HourglassEmpty,
-                    contentDescription = "Pending Approval",
+                    contentDescription = tr("Pending Approval"),
                     tint = StatusPending,
                     modifier = Modifier.size(28.dp)
                 )
@@ -439,7 +443,7 @@ private fun PendingStatusCard(
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = "Approval Request Submitted",
+                text = tr("Approval Request Submitted"),
                 fontSize = 17.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White
@@ -448,7 +452,7 @@ private fun PendingStatusCard(
             Spacer(modifier = Modifier.height(6.dp))
 
             Text(
-                text = "Your approval request has been submitted.\nPlease contact the administrator and wait for approval.",
+                text = tr("Your approval request has been submitted.\nPlease contact the administrator and wait for approval."),
                 fontSize = 13.sp,
                 color = Color(0xFFD1D5DB),
                 textAlign = TextAlign.Center
@@ -463,13 +467,13 @@ private fun PendingStatusCard(
                     .background(TechDarkSurfaceVariant, RoundedCornerShape(10.dp))
                     .padding(12.dp)
             ) {
-                InfoLine("Applicant", state.license?.userName ?: "N/A")
-                InfoLine("Contact", state.license?.contactNumber ?: "N/A")
+                InfoLine(tr("Applicant"), state.license?.userName ?: tr("N/A"))
+                InfoLine(tr("Contact"), state.license?.contactNumber ?: tr("N/A"))
                 if (!state.license?.telegramUsername.isNullOrBlank()) {
-                    InfoLine("Telegram", state.license?.telegramUsername!!)
+                    InfoLine(tr("Telegram"), state.license?.telegramUsername!!)
                 }
                 if (!state.license?.whatsappNumber.isNullOrBlank()) {
-                    InfoLine("WhatsApp", state.license?.whatsappNumber!!)
+                    InfoLine(tr("WhatsApp"), state.license?.whatsappNumber!!)
                 }
             }
 
@@ -490,11 +494,11 @@ private fun PendingStatusCard(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
-                        contentDescription = "Refresh",
+                        contentDescription = tr("Refresh"),
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Check Status")
+                    Text(tr("Check Status"))
                 }
 
                 OutlinedButton(
@@ -505,7 +509,7 @@ private fun PendingStatusCard(
                         .testTag("btn_edit_request"),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("Edit Info")
+                    Text(tr("Edit Info"))
                 }
             }
         }
@@ -538,7 +542,7 @@ private fun RejectedStatusCard(
             ) {
                 Icon(
                     imageVector = Icons.Default.Block,
-                    contentDescription = "Approval Rejected",
+                    contentDescription = tr("Approval Rejected"),
                     tint = StatusRejected,
                     modifier = Modifier.size(28.dp)
                 )
@@ -551,7 +555,7 @@ private fun RejectedStatusCard(
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = "Approval Request Rejected",
+                text = tr("Approval Request Rejected"),
                 fontSize = 17.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White
@@ -560,7 +564,7 @@ private fun RejectedStatusCard(
             if (!state.license?.rejectionReason.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "Reason: ${state.license?.rejectionReason}",
+                    text = "${tr("Reason")}: ${state.license?.rejectionReason ?: tr("N/A")}",
                     fontSize = 13.sp,
                     color = StatusRejected,
                     textAlign = TextAlign.Center
@@ -581,7 +585,7 @@ private fun RejectedStatusCard(
                     shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MiOrange)
                 ) {
-                    Text("Re-apply")
+                    Text(tr("Re-apply"))
                 }
 
                 OutlinedButton(
@@ -591,7 +595,7 @@ private fun RejectedStatusCard(
                         .height(44.dp),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("Check Status")
+                    Text(tr("Check Status"))
                 }
             }
         }
@@ -605,7 +609,7 @@ private fun ExpiredStatusCard(
 ) {
     val expiryFormatted = state.license?.expirationTimestamp?.let {
         SimpleDateFormat("dd MMMM yyyy HH:mm", Locale.getDefault()).format(Date(it))
-    } ?: "N/A"
+    } ?: tr("N/A")
 
     Card(
         modifier = Modifier
@@ -624,7 +628,7 @@ private fun ExpiredStatusCard(
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = "License Expired",
+                text = tr("License Expired"),
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White
@@ -633,7 +637,7 @@ private fun ExpiredStatusCard(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = "Expired on: $expiryFormatted\nPlease contact the administrator to renew your license.",
+                text = "${tr("Expired on")}: $expiryFormatted\n${tr("Please contact the administrator to renew your license.")}",
                 fontSize = 13.sp,
                 color = Color(0xFFD1D5DB),
                 textAlign = TextAlign.Center
@@ -649,7 +653,7 @@ private fun ExpiredStatusCard(
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MiOrange)
             ) {
-                Text("Refresh License")
+                Text(tr("Refresh License"))
             }
         }
     }
@@ -677,7 +681,7 @@ private fun BlockedStatusCard(
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = "Device Blocked",
+                text = tr("Device Blocked"),
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = StatusBlocked
@@ -686,7 +690,7 @@ private fun BlockedStatusCard(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = "This device has been blocked by the administrator. Contact support if you believe this is an error.",
+                text = tr("This device has been blocked by the administrator. Contact support if you believe this is an error."),
                 fontSize = 13.sp,
                 color = Color(0xFFD1D5DB),
                 textAlign = TextAlign.Center
@@ -701,7 +705,7 @@ private fun BlockedStatusCard(
                     .height(44.dp),
                 shape = RoundedCornerShape(10.dp)
             ) {
-                Text("Check Status")
+                Text(tr("Check Status"))
             }
         }
     }
@@ -721,24 +725,51 @@ private fun MaintenanceCard() {
         ) {
             Icon(
                 imageVector = Icons.Default.Build,
-                contentDescription = "Maintenance",
+                contentDescription = tr("Maintenance"),
                 tint = TechCyan,
                 modifier = Modifier.size(36.dp)
             )
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = "Maintenance Mode",
+                text = tr("Maintenance Mode"),
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "MI Unlock is temporarily under maintenance. Please try again later.",
+                text = tr("MI Unlock is temporarily under maintenance. Please try again later."),
                 fontSize = 13.sp,
                 color = Color(0xFFD1D5DB),
                 textAlign = TextAlign.Center
             )
+        }
+    }
+}
+
+@Composable
+private fun InvalidLicenseCard(onRefresh: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = TechDarkSurface),
+        border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(StatusRejected.copy(alpha = 0.5f)))
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(Icons.Default.HourglassEmpty, contentDescription = tr("Invalid expiration timestamp"), tint = StatusRejected, modifier = Modifier.size(36.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(tr("Invalid License Data"), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(tr("Missing expiration timestamp"), fontSize = 13.sp, color = Color(0xFFD1D5DB), textAlign = TextAlign.Center)
+            Spacer(modifier = Modifier.height(14.dp))
+            OutlinedButton(onClick = onRefresh) {
+                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(tr("Refresh"))
+            }
         }
     }
 }
@@ -757,20 +788,20 @@ private fun UpdateRequiredCard(minVersion: Int) {
         ) {
             Icon(
                 imageVector = Icons.Default.SystemUpdate,
-                contentDescription = "Update Required",
+                contentDescription = tr("Update Required"),
                 tint = MiOrange,
                 modifier = Modifier.size(36.dp)
             )
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = "Update Required",
+                text = tr("Update Required"),
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "A newer version of MI Unlock is required (v$minVersion+). Please contact the administrator or download the latest update.",
+                text = tr("A newer version of MI Unlock is required (v%s+). Please contact the administrator or download the latest update.").format(minVersion),
                 fontSize = 13.sp,
                 color = Color(0xFFD1D5DB),
                 textAlign = TextAlign.Center

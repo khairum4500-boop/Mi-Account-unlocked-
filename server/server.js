@@ -18,7 +18,7 @@ const { bot, launchBot, notifyAdminsNewRequest } = require('./bot');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'mi_unlock_super_secret_admin_key_2026';
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || '';
 
 // Middleware
 app.use(helmet());
@@ -53,7 +53,14 @@ app.use('/api/', generalLimiter);
 app.use('/api/approval/request', registrationLimiter);
 
 // Admin Auth Middleware
+function parseDurationSeconds(value, fallbackDays = null) {
+    const raw = value != null ? Number(value) : (fallbackDays != null ? Number(fallbackDays) * 86400 : NaN);
+    if (!Number.isFinite(raw) || raw < 60 || raw > (10 * 365 * 24 * 60 * 60)) return null;
+    return Math.floor(raw);
+}
+
 function requireAdminKey(req, res, next) {
+    if (!ADMIN_API_KEY) return res.status(503).json({ error: 'Admin API is not configured' });
     const authHeader = req.headers['x-admin-key'] || req.headers['authorization'];
     if (!authHeader || authHeader.replace('Bearer ', '') !== ADMIN_API_KEY) {
         return res.status(401).json({ error: 'Unauthorized: Invalid or missing Admin API Key' });
@@ -198,9 +205,11 @@ app.get('/api/admin/device/:id', requireAdminKey, async (req, res) => {
 
 app.post('/api/admin/approve', requireAdminKey, async (req, res) => {
     try {
-        const { deviceId, durationDays, isLifetime, adminId } = req.body;
+        const { deviceId, durationDays, durationSeconds, isLifetime, adminId } = req.body;
         if (!deviceId) return res.status(400).json({ error: 'deviceId is required' });
-        const updated = await db.approveDevice(deviceId, parseInt(durationDays, 10) || 30, Boolean(isLifetime), adminId || 'API_ADMIN');
+        const seconds = Boolean(isLifetime) ? 0 : parseDurationSeconds(durationSeconds, durationDays);
+        if (!Boolean(isLifetime) && seconds == null) return res.status(400).json({ error: 'durationSeconds must be between 60 seconds and 10 years' });
+        const updated = await db.approveDeviceDuration(deviceId, seconds || 0, Boolean(isLifetime), adminId || 'API_ADMIN');
         res.json(updated);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -231,9 +240,11 @@ app.post('/api/admin/block', requireAdminKey, async (req, res) => {
 
 app.post('/api/admin/unblock', requireAdminKey, async (req, res) => {
     try {
-        const { deviceId, durationDays, adminId } = req.body;
+        const { deviceId, durationDays, durationSeconds, adminId } = req.body;
         if (!deviceId) return res.status(400).json({ error: 'deviceId is required' });
-        const updated = await db.unblockDevice(deviceId, 'APPROVED', parseInt(durationDays, 10) || 30, adminId || 'API_ADMIN');
+        const seconds = parseDurationSeconds(durationSeconds, durationDays);
+        if (seconds == null) return res.status(400).json({ error: 'durationSeconds must be between 60 seconds and 10 years' });
+        const updated = await db.unblockDeviceDuration(deviceId, seconds, adminId || 'API_ADMIN');
         res.json(updated);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -242,9 +253,11 @@ app.post('/api/admin/unblock', requireAdminKey, async (req, res) => {
 
 app.post('/api/admin/extend', requireAdminKey, async (req, res) => {
     try {
-        const { deviceId, days, adminId } = req.body;
-        if (!deviceId || !days) return res.status(400).json({ error: 'deviceId and days are required' });
-        const updated = await db.extendLicense(deviceId, parseInt(days, 10), adminId || 'API_ADMIN');
+        const { deviceId, days, durationSeconds, adminId } = req.body;
+        if (!deviceId || (durationSeconds == null && !days)) return res.status(400).json({ error: 'deviceId and duration are required' });
+        const seconds = parseDurationSeconds(durationSeconds, days);
+        if (seconds == null) return res.status(400).json({ error: 'durationSeconds must be between 60 seconds and 10 years' });
+        const updated = await db.extendLicenseDuration(deviceId, seconds, adminId || 'API_ADMIN');
         res.json(updated);
     } catch (err) {
         res.status(500).json({ error: err.message });
