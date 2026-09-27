@@ -51,7 +51,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDirection
-import androidx.compose.material3.LocalTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -74,6 +73,11 @@ fun MiAccountUnlockedScreen(
     onLogout: () -> Unit
 ) {
     val context = LocalContext.current
+    val copiedText = tr("Copied")
+    val userIdLabel = tr("User ID")
+    val deviceIdLabel = tr("Device ID")
+    val passTokenLabel = tr("Pass Token")
+    val termuxPayloadLabel = tr("Termux MiUnlock Payload")
     val scrollState = rememberScrollState()
 
     Column(
@@ -261,7 +265,7 @@ fun MiAccountUnlockedScreen(
                         title = tr("User ID"),
                         value = loginData.userId,
                         icon = Icons.Default.AccountCircle,
-                        onCopy = { copyToClipboard(context, tr("User ID"), loginData.userId, tr("Copied")) }
+                        onCopy = { copyToClipboard(context, userIdLabel, loginData.userId, copiedText) }
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
@@ -270,7 +274,7 @@ fun MiAccountUnlockedScreen(
                         title = tr("Device ID"),
                         value = loginData.deviceId,
                         icon = Icons.Default.PhoneAndroid,
-                        onCopy = { copyToClipboard(context, tr("Device ID"), loginData.deviceId, tr("Copied")) }
+                        onCopy = { copyToClipboard(context, deviceIdLabel, loginData.deviceId, copiedText) }
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
@@ -279,7 +283,7 @@ fun MiAccountUnlockedScreen(
                         title = tr("Pass Token"),
                         value = loginData.passToken,
                         icon = Icons.Default.Key,
-                        onCopy = { copyToClipboard(context, tr("Pass Token"), loginData.passToken, tr("Copied")) }
+                        onCopy = { copyToClipboard(context, passTokenLabel, loginData.passToken, copiedText) }
                     )
 
                     Spacer(modifier = Modifier.height(20.dp))
@@ -288,7 +292,7 @@ fun MiAccountUnlockedScreen(
                     Button(
                         onClick = {
                             val termuxPayload = "USER_ID=\"${loginData.userId}\"\nDEVICE_ID=\"${loginData.deviceId}\"\nPASS_TOKEN=\"${loginData.passToken}\""
-                            copyToClipboard(context, "Termux MiUnlock Payload", termuxPayload, tr("Copied"))
+                            copyToClipboard(context, termuxPayloadLabel, termuxPayload, copiedText)
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -358,6 +362,9 @@ private fun formatRemaining(milliseconds: Long): String {
 @Composable
 private fun CanonicalOutputCard(loginData: LoginData) {
     val context = LocalContext.current
+    val copiedText = tr("Copied")
+    val originalOutputLabel = tr("Original Output")
+    val decodedOutputLabel = tr("Decoded Output")
     val payload = remember(loginData.passToken, loginData.userId, loginData.deviceId) { CanonicalPayload.build(loginData) }
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -371,14 +378,14 @@ private fun CanonicalOutputCard(loginData: LoginData) {
             }
             Text(tr("Original Output (HEX)"), fontWeight = FontWeight.Bold, color = Color.White)
             Text(payload.hex, fontFamily = FontFamily.Monospace, fontSize = 10.sp, color = TechCyan, modifier = Modifier.padding(top = 8.dp), style = TextStyle(textDirection = TextDirection.Ltr))
-            OutlinedButton(enabled = payload.isValid, onClick = { copyToClipboard(context, tr("Original Output"), payload.hex, tr("Copied")) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            OutlinedButton(enabled = payload.isValid, onClick = { copyToClipboard(context, originalOutputLabel, payload.hex, copiedText) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp)); Text(tr("COPY ORIGINAL OUTPUT"))
             }
             Spacer(modifier = Modifier.height(14.dp))
             Text(tr("Decoded Output (JSON)"), fontWeight = FontWeight.Bold, color = Color.White)
             Text(payload.decodedJson ?: payload.json, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color.White, modifier = Modifier.padding(top = 8.dp), style = TextStyle(textDirection = TextDirection.Ltr))
-            OutlinedButton(enabled = payload.isValid, onClick = { copyToClipboard(context, tr("Decoded Output"), payload.json, tr("Copied")) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            OutlinedButton(enabled = payload.isValid, onClick = { copyToClipboard(context, decodedOutputLabel, payload.json, copiedText) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp)); Text(tr("COPY DECODED OUTPUT"))
             }

@@ -77,6 +77,8 @@ fun AuthorizationScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val copiedText = tr("Copied")
+    val deviceIdLabel = tr("Device ID")
     val scrollState = rememberScrollState()
 
     var nameInput by remember { mutableStateOf(state.license?.userName ?: "") }
@@ -161,7 +163,7 @@ fun AuthorizationScreen(
                 }
 
                 IconButton(
-                    onClick = { AdminContactHelper.copyToClipboard(context, state.deviceId, tr("Device ID"), tr("Copied")) },
+                    onClick = { AdminContactHelper.copyToClipboard(context, state.deviceId, deviceIdLabel, copiedText) },
                     modifier = Modifier.size(36.dp)
                 ) {
                     Icon(

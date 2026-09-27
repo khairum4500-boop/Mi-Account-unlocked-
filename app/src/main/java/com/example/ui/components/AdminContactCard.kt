@@ -58,6 +58,19 @@ fun AdminContactCard(
     deviceId: String = ""
 ) {
     val context = LocalContext.current
+    // Resolve localized strings during composition; click/copy callbacks are not composable.
+    val copiedText = tr("Copied")
+    val telegramUsernameLabel = tr("Telegram username")
+    val whatsappNumberLabel = tr("WhatsApp number")
+    val contactNumberLabel = tr("Contact number")
+    val adminEmailLabel = tr("Admin email")
+    val cannotOpenWhatsApp = tr("Cannot open WhatsApp")
+    val cannotLaunchDialer = tr("Cannot launch dialer")
+    val cannotOpenEmail = tr("Cannot open email client")
+    val whatsappInquiry = tr("Hello Admin, inquiry for MI Unlock Device ID: %s").format(deviceId)
+    val whatsappQuickMessage = tr("Hello Admin, MI Unlock ID: %s").format(deviceId)
+    val emailSubject = tr("MI Unlock License Request")
+    val emailBody = tr("Hello Admin,\n\nI need assistance with my MI Unlock license.\nDevice ID: %s\n").format(deviceId)
 
     Card(
         modifier = modifier
@@ -112,7 +125,7 @@ fun AdminContactCard(
                 label = tr("Telegram"),
                 value = telegram,
                 iconColor = TechCyan,
-                onCopy = { AdminContactHelper.copyToClipboard(context, telegram, tr("Telegram username"), tr("Copied")) },
+                onCopy = { AdminContactHelper.copyToClipboard(context, telegram, telegramUsernameLabel, copiedText) },
                 onClick = { AdminContactHelper.openTelegram(context, telegram) }
             )
 
@@ -121,8 +134,8 @@ fun AdminContactCard(
                 label = tr("WhatsApp"),
                 value = whatsapp,
                 iconColor = Color(0xFF25D366),
-                onCopy = { AdminContactHelper.copyToClipboard(context, whatsapp, tr("WhatsApp number"), tr("Copied")) },
-                onClick = { AdminContactHelper.openWhatsApp(context, whatsapp, tr("Hello Admin, inquiry for MI Unlock Device ID: %s").format(deviceId), tr("Cannot open WhatsApp")) }
+                onCopy = { AdminContactHelper.copyToClipboard(context, whatsapp, whatsappNumberLabel, copiedText) },
+                onClick = { AdminContactHelper.openWhatsApp(context, whatsapp, whatsappInquiry, cannotOpenWhatsApp) }
             )
 
             ContactRowItem(
@@ -130,8 +143,8 @@ fun AdminContactCard(
                 label = tr("Call / Phone"),
                 value = contactNumber,
                 iconColor = Color(0xFF38BDF8),
-                onCopy = { AdminContactHelper.copyToClipboard(context, contactNumber, tr("Contact number"), tr("Copied")) },
-                onClick = { AdminContactHelper.callAdmin(context, contactNumber, tr("Cannot launch dialer")) }
+                onCopy = { AdminContactHelper.copyToClipboard(context, contactNumber, contactNumberLabel, copiedText) },
+                onClick = { AdminContactHelper.callAdmin(context, contactNumber, cannotLaunchDialer) }
             )
 
             ContactRowItem(
@@ -139,8 +152,8 @@ fun AdminContactCard(
                 label = tr("Email"),
                 value = email,
                 iconColor = Color(0xFFFB923C),
-                onCopy = { AdminContactHelper.copyToClipboard(context, email, tr("Admin email"), tr("Copied")) },
-                onClick = { AdminContactHelper.sendEmail(context, email, deviceId = deviceId, subject = tr("MI Unlock License Request"), body = tr("Hello Admin,\n\nI need assistance with my MI Unlock license.\nDevice ID: %s\n").format(deviceId), errorPrefix = tr("Cannot open email client")) }
+                onCopy = { AdminContactHelper.copyToClipboard(context, email, adminEmailLabel, copiedText) },
+                onClick = { AdminContactHelper.sendEmail(context, email, deviceId = deviceId, subject = emailSubject, body = emailBody, errorPrefix = cannotOpenEmail) }
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -162,7 +175,7 @@ fun AdminContactCard(
                 }
 
                 Button(
-                    onClick = { AdminContactHelper.openWhatsApp(context, whatsapp, tr("Hello Admin, MI Unlock ID: %s").format(deviceId), tr("Cannot open WhatsApp")) },
+                    onClick = { AdminContactHelper.openWhatsApp(context, whatsapp, whatsappQuickMessage, cannotOpenWhatsApp) },
                     modifier = Modifier
                         .weight(1f)
                         .testTag("action_whatsapp"),
@@ -173,7 +186,7 @@ fun AdminContactCard(
                 }
 
                 OutlinedButton(
-                    onClick = { AdminContactHelper.callAdmin(context, contactNumber, tr("Cannot launch dialer")) },
+                    onClick = { AdminContactHelper.callAdmin(context, contactNumber, cannotLaunchDialer) },
                     modifier = Modifier
                         .weight(0.9f)
                         .testTag("action_call"),

@@ -70,6 +70,8 @@ fun LicenseAdminScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val copiedText = tr("Copied")
+    val deviceIdLabel = tr("Device ID")
     val scrollState = rememberScrollState()
 
     var serverUrlInput by remember(state.serverBaseUrl) { mutableStateOf(state.serverBaseUrl) }
@@ -139,7 +141,7 @@ fun LicenseAdminScreen(
 
                 LicenseItem(tr("License ID"), state.license?.licenseId ?: "LIC-GEN-${state.deviceId.takeLast(6)}")
                 LicenseItem(tr("Device ID"), state.deviceId, isCopyable = true) {
-                    AdminContactHelper.copyToClipboard(context, state.deviceId, tr("Device ID"), tr("Copied"))
+                    AdminContactHelper.copyToClipboard(context, state.deviceId, deviceIdLabel, copiedText)
                 }
                 LicenseItem(tr("Licensee Name"), state.license?.userName ?: tr("Authorized User"))
                 LicenseItem(tr("Contact Phone"), state.license?.contactNumber ?: tr("N/A"))
